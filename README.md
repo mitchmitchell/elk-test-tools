@@ -67,5 +67,6 @@ ELK_TEST_ACCESS_CODE=... ELK_TEST_PASSPHRASE=... elk-link-test-tool --host <TEST
 - Registers a new random 12-digit decimal client serial (HA's scheme, never HA's ID), mn 222.
 - Creates the link file atomically (O_EXCL, mode 0600). It never overwrites an existing
   file and refuses paths inside a git repo or under the vault.
-- Prints only the new serial. Codes, keys and the file path are never logged or printed;
-  all logging is silenced while linking.
+- Reports only success or failure. The serial, codes, keys and file path are never logged
+  or printed (the serial is in the link file, and the tool auto-protects it). All logging
+  is silenced while linking.

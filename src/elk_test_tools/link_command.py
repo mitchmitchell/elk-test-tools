@@ -5,7 +5,7 @@ flow uses); no protocol code here. Codes come only from env vars
 (ELK_TEST_ACCESS_CODE, ELK_TEST_PASSPHRASE). The link file named by
 ELK_TEST_LINK_FILE is created atomically (O_CREAT|O_EXCL, mode 0600), never
 overwritten, and never under the vault or inside a git repo. Keys, codes and the
-file path are never logged or printed; only the new serial is printed.
+file path are never logged or printed; only success or failure is reported.
 """
 
 from __future__ import annotations
@@ -145,7 +145,7 @@ def run_link(
         access = passph = None
         loop.close()
         REDACTOR.clear()
-    out(serial)
+    out("OK: link created")  # never the serial, keys, codes or path
     return serial
 
 

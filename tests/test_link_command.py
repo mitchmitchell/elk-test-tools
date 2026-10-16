@@ -54,13 +54,14 @@ def _run(tmp_path: Any, client: FakeClient, env: dict[str, str], out: list[str])
     )
 
 
-def test_links_with_own_serial_writes_0600_and_prints_only_serial(tmp_path, caplog):
+def test_links_with_own_serial_writes_0600_and_reports_only_success(tmp_path, caplog):
     caplog.set_level(logging.DEBUG)
     f = tmp_path / "tool-link.json"
     client = FakeClient()
     out: list[str] = []
     assert _run(tmp_path, client, _env(f), out) == SERIAL
-    assert out == [SERIAL]
+    assert out == ["OK: link created"]
+    assert all(x not in "".join(out) for x in (SERIAL, ACCESS, PASSPH, KEYS.linkkey_hex, str(f)))
     assert stat.S_IMODE(f.stat().st_mode) == 0o600
     data = json.loads(f.read_text())
     assert data == {
@@ -74,7 +75,7 @@ def test_links_with_own_serial_writes_0600_and_prints_only_serial(tmp_path, capl
         },
     }
     assert client.link_calls[0]["client_identity"] == {"mn": "222", "sn": SERIAL}
-    for secret in (ACCESS, PASSPH, KEYS.linkkey_hex, str(f)):
+    for secret in (ACCESS, PASSPH, KEYS.linkkey_hex, str(f), SERIAL):
         assert secret not in caplog.text
 
 
@@ -132,7 +133,7 @@ def test_codes_only_from_env_and_removed(tmp_path):
     assert lc.ENV_ACCESS_CODE not in env and lc.ENV_PASSPHRASE not in env
 
 
-def test_cli_prints_only_serial_and_has_no_code_options(tmp_path, monkeypatch, capsys):
+def test_cli_reports_only_success_and_has_no_code_options(tmp_path, monkeypatch, capsys):
     f = tmp_path / "tool-link.json"
     for k, v in _env(f).items():
         monkeypatch.setenv(k, v)
@@ -140,8 +141,8 @@ def test_cli_prints_only_serial_and_has_no_code_options(tmp_path, monkeypatch, c
     monkeypatch.setattr(lc, "generate_serial", lambda: SERIAL)
     rc = lc.main(["--host", "10.0.0.9"], client_factory=FakeClient)
     captured = capsys.readouterr()
-    assert rc == 0 and captured.out == SERIAL + "\n"
-    for secret in (ACCESS, PASSPH, KEYS.linkkey_hex, str(f)):
+    assert rc == 0 and captured.out == "OK: link created\n"
+    for secret in (SERIAL, ACCESS, PASSPH, KEYS.linkkey_hex, KEYS.tempkey_hex, str(f)):
         assert secret not in captured.out + captured.err
     opts = {o for a in lc.build_parser()._actions for o in a.option_strings}
     assert not any(x in o for o in opts for x in ("code", "pass", "key", "file"))
@@ -151,3 +152,16 @@ def test_generated_serial_is_12_digit_decimal_no_leading_zero():
     for _ in range(200):
         s = lc.generate_serial()
         assert len(s) == 12 and s.isdigit() and s[0] != "0"
+
+
+def test_failure_output_has_no_serial_keys_code_or_path(tmp_path, monkeypatch, capsys):
+    f = tmp_path / "tool-link.json"
+    for k, v in _env(f).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(lc, "VAULT_ROOT", tmp_path / "obsidian")
+    monkeypatch.setattr(lc, "generate_serial", lambda: SERIAL)
+    rc = lc.main(["--host", "10.0.0.9"], client_factory=lambda: FakeClient(mac="001122334455"))
+    captured = capsys.readouterr()
+    assert rc == 2 and captured.out == "" and captured.err.startswith("ABORT:")
+    for secret in (SERIAL, ACCESS, PASSPH, KEYS.linkkey_hex, str(f)):
+        assert secret not in captured.out + captured.err
