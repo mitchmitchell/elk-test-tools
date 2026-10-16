@@ -6,7 +6,7 @@ import copy
 from typing import Any
 
 OWN_SN = "AABBCCDDEEFF"
-HA_SN = "2CCF67CA1AE0"
+HA_SN = "5A0C11D2E3F4"  # some other HA link (made-up serial)
 BASELINE_SN = "119112725266"
 TOUCH_SN = "0CC03EB00001"
 SECRET = "987654"
