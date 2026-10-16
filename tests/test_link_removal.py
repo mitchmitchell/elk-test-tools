@@ -174,6 +174,7 @@ def test_apply_removes_verifies_and_reports_session():
     assert any("session after delete" in s for s in lines)
     k = kinds(p)
     assert k.count("authenticate") == 1 and k[-1] == "logout"
+    assert "logout ok" in res.actions
     assert k.index("authenticate") < k.index("del_attribs")
     auth = [f for f in p.frames if "authenticate" in f]
     dels = [f for f in p.frames if "del_attribs" in f.get("net_dev", {})]
@@ -233,3 +234,95 @@ def test_cli_never_has_pin_argument():
 def test_live_transport_not_wired():
     with pytest.raises(lr.AbortError, match="pass-through"):
         lr.make_live_transport()
+
+
+def test_child_logger_with_own_handler_is_redacted():
+    import io
+
+    buf = io.StringIO()
+    child = logging.getLogger("elke27_lib.transport.test")
+    h = logging.StreamHandler(buf)
+    child.addHandler(h)
+    child.setLevel(logging.DEBUG)
+    child.propagate = False
+    try:
+        p = FakePanel()
+        orig = p.request
+
+        def leaky(payload):
+            child.debug("tx %s raw=%s", payload, str(payload))
+            return orig(payload)
+
+        p.request = leaky
+        go(p, apply=True)
+    finally:
+        child.removeHandler(h)
+    assert "authenticate" in buf.getvalue() and SECRET not in buf.getvalue()
+
+
+def test_logout_sent_even_if_verify_inventory_fails():
+    p = FakePanel()
+    orig = p.request
+    calls = {"n": 0}
+
+    def flaky(payload):
+        if "get_list" in payload.get("net_dev", {}):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                return {"net_dev": {"get_list": {"error_code": 9}}}
+        return orig(payload)
+
+    p.request = flaky
+    with pytest.raises(lr.AbortError):
+        go(p, apply=True)
+    assert kinds(p)[-1] == "logout" and not p.authed
+
+
+def test_logout_rejection_is_reported():
+    p = FakePanel()
+    orig = p.request
+
+    def bad_logout(payload):
+        if "logout" in payload.get("net_dev", {}):
+            p.frames.append(payload)
+            return {"net_dev": {"logout": {"error_code": 3}}}
+        return orig(payload)
+
+    p.request = bad_logout
+    with pytest.raises(lr.AbortError, match="logout"):
+        go(p, apply=True)
+
+
+def test_partial_deletion_is_logged_on_abort(tmp_path, monkeypatch):
+    monkeypatch.setenv(lr.ENV_INSTALLER_CODE, SECRET)
+    monkeypatch.setattr("builtins.input", lambda _p: "cc031eb03b20")
+    p = FakePanel()
+    orig = p.request
+
+    def fail_second(payload):
+        nd = payload.get("net_dev", {})
+        if "del_attribs" in nd and nd["del_attribs"]["net_dev_id"] == 4:
+            p.frames.append(payload)
+            return {"net_dev": {"del_attribs": {"error_code": 8}}}
+        return orig(payload)
+
+    p.request = fail_second
+    log = tmp_path / "log.md"
+    rc = lr.main(
+        [
+            "--remove",
+            A,
+            "--expect-name",
+            "Old Link A",
+            "--remove",
+            B,
+            "--expect-name",
+            "Old Link B",
+            "--apply",
+            "--log-file",
+            str(log),
+        ],
+        transport=p,
+    )
+    text = log.read_text()
+    assert rc == 2 and f"sn={A} ok" in text and "ABORT" in text and SECRET not in text

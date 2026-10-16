@@ -39,7 +39,9 @@ LOG = logging.getLogger("elk_test_tools.link_removal")
 
 
 class AbortError(Exception):
-    """Run aborted; message never contains secrets."""
+    """Run aborted; message never contains secrets. ``result`` holds partial progress."""
+
+    result: RunResult | None = None
 
 
 class Transport(Protocol):
@@ -98,13 +100,19 @@ REDACTOR = RedactingFilter()
 
 
 def install_redaction() -> None:
-    for name in ("", "elk_test_tools", "elke27_lib"):
-        lg = logging.getLogger(name)
+    """Attach the filter to every existing logger and handler, including children
+    such as ``elke27_lib.transport`` with their own handlers (ancestor logger
+    filters do not run for those). Called again right before authenticating."""
+    loggers = [logging.getLogger()] + [
+        lg for lg in logging.Logger.manager.loggerDict.values() if isinstance(lg, logging.Logger)
+    ]
+    loggers += [logging.getLogger(n) for n in ("elk_test_tools", "elke27_lib")]
+    for lg in loggers:
         if REDACTOR not in lg.filters:
             lg.addFilter(REDACTOR)
-    for h in logging.getLogger().handlers:
-        if REDACTOR not in h.filters:
-            h.addFilter(REDACTOR)
+        for h in lg.handlers:
+            if REDACTOR not in h.filters:
+                h.addFilter(REDACTOR)
 
 
 # --------------------------------------------------------------------------- model
@@ -218,6 +226,9 @@ def run(
             )
         finally:
             transport.close()
+    except AbortError as exc:
+        exc.result = result
+        raise
     finally:
         code = None
         REDACTOR.clear()
@@ -261,6 +272,7 @@ def _run_connected(t, targets, target_sns, apply, code, confirm, out, clock, res
     last_auth = [0.0]
 
     def authenticate() -> None:
+        install_redaction()
         try:
             pin = int(code)
         except (TypeError, ValueError):
@@ -296,11 +308,16 @@ def _run_connected(t, targets, target_sns, apply, code, confirm, out, clock, res
             result.removed.append(sn)
             result.actions.append(f"del_attribs net_dev_id={slot.net_dev_id} sn={sn} ok")
     finally:
-        result.after = inventory(t)
-        for sn in result.removed:
-            result.sessions[sn] = t.observe_session(sn)
-        t.request({"net_dev": {"logout": True}})
-        result.actions.append("logout")
+        try:
+            result.after = inventory(t)
+            for sn in result.removed:
+                try:
+                    result.sessions[sn] = t.observe_session(sn)
+                except Exception as exc:  # noqa: BLE001 - report, keep going
+                    result.sessions[sn] = f"unknown ({type(exc).__name__})"
+        finally:
+            _ok(t.request({"net_dev": {"logout": True}}), "net_dev", "logout")
+            result.actions.append("logout ok")
 
     after = {s.sn for s in result.after}
     left = target_sns & after
@@ -388,6 +405,9 @@ def main(argv: list[str] | None = None, transport: Transport | None = None) -> i
             append_log(args.log_file, TEST_PANEL_MAC, res)
     except AbortError as exc:
         print(f"ABORT: {exc}", file=sys.stderr)
+        if args.log_file and exc.result is not None and exc.result.before:
+            exc.result.actions.append(f"ABORT: {exc}")
+            append_log(args.log_file, TEST_PANEL_MAC, exc.result)
         return 2
     return 0
 
