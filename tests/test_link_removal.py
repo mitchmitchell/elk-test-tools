@@ -345,3 +345,19 @@ def test_late_logger_and_leading_zero_redacted(caplog):
         assert caplog.messages and all("123" not in m for m in caplog.messages)
     finally:
         lr.REDACTOR.clear()
+
+
+def test_leading_zero_code_refused_before_authenticate():
+    p = FakePanel()
+    with pytest.raises(lr.AbortError, match="leading zero") as ei:
+        go(p, apply=True, env={lr.ENV_INSTALLER_CODE: "0123"})
+    assert "0123" not in str(ei.value)
+    assert "authenticate" not in kinds(p) and len(p.devices) == 4
+
+
+def test_armed_area_refused_before_authenticate():
+    p = FakePanel()
+    p.areas[2] = "ARMED_AWAY"
+    with pytest.raises(lr.AbortError, match="DISARMED"):
+        go(p, apply=True)
+    assert "authenticate" not in kinds(p) and len(p.devices) == 4

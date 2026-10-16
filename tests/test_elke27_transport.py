@@ -53,6 +53,7 @@ def test_link_keys_are_redaction_secrets():
 def test_unreadable_link_file_message_has_no_contents(tmp_path):
     f = tmp_path / "link.json"
     f.write_text(json.dumps({"host": "h", "link_keys": KEYS}))
+    f.chmod(0o600)
     with pytest.raises(lr.AbortError) as ei:
         et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(f)})
     assert KEYS["linkkey_hex"] not in str(ei.value)
@@ -67,7 +68,7 @@ def test_request_uses_passthrough_with_installer_opt_in():
 
 def test_authenticate_goes_through_control_authenticate():
     c = FakeClient()
-    assert _t(c).authenticate("0123") is True
+    assert _t(c).authenticate("4123") is True
     assert c.calls == [("control_authenticate", None, {"pin_type": "str"})]
 
 
@@ -84,3 +85,71 @@ def test_panel_error_maps_to_error_code_reply():
     c = FakeClient(error=SimpleNamespace(panel_error_code=11008))
     reply = _t(c).request({"net_dev": {"del_attribs": {"net_dev_id": 3}}})
     assert reply == {"net_dev": {"del_attribs": {"error_code": 11008}}}
+
+
+# --- link file hygiene (Architect ruling 6) --------------------------------------
+def _link_file(d, mode=0o600):
+    f = d / "link.json"
+    f.write_text(
+        json.dumps({"host": "h", "port": 1, "own_link_sn": "AABBCCDDEEFF", "link_keys": KEYS})
+    )
+    f.chmod(mode)
+    return f
+
+
+def test_link_file_ok_when_private(tmp_path):
+    f = _link_file(tmp_path)
+    assert et.check_link_file(f, vault_root=tmp_path / "vault") == f.resolve()
+    t = et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(f)})
+    assert t.own_link_sn() == "AABBCCDDEEFF"
+    lr.REDACTOR.clear()
+
+
+@pytest.mark.parametrize("mode", [0o640, 0o604, 0o644, 0o660])
+def test_link_file_group_or_other_access_refused(tmp_path, mode):
+    f = _link_file(tmp_path, mode)
+    with pytest.raises(lr.AbortError, match="0600") as ei:
+        et.check_link_file(f, vault_root=tmp_path / "vault")
+    assert str(tmp_path) not in str(ei.value)
+
+
+def test_link_file_in_git_repo_refused(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "sub").mkdir()
+    f = _link_file(repo / "sub")
+    with pytest.raises(lr.AbortError, match="git") as ei:
+        et.check_link_file(f, vault_root=tmp_path / "vault")
+    assert str(tmp_path) not in str(ei.value)
+
+
+def test_link_file_in_vault_refused(tmp_path):
+    vault = tmp_path / "obsidian"
+    (vault / "notes").mkdir(parents=True)
+    f = _link_file(vault / "notes")
+    with pytest.raises(lr.AbortError, match="vault") as ei:
+        et.check_link_file(f, vault_root=vault)
+    assert str(tmp_path) not in str(ei.value)
+
+
+def test_link_file_symlink_into_vault_refused(tmp_path):
+    vault = tmp_path / "obsidian"
+    vault.mkdir()
+    real = _link_file(vault)
+    link = tmp_path / "outside.json"
+    link.symlink_to(real)
+    with pytest.raises(lr.AbortError, match="vault"):
+        et.check_link_file(link, vault_root=vault)
+
+
+def test_missing_link_file_message_has_no_path(tmp_path):
+    p = tmp_path / "nope.json"
+    with pytest.raises(lr.AbortError) as ei:
+        et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(p)})
+    assert str(p) not in str(ei.value)
+
+
+def test_authenticate_refuses_leading_zero_without_sending():
+    c = FakeClient()
+    assert _t(c).authenticate("0123") is False
+    assert c.calls == []

@@ -39,6 +39,6 @@ elke27's raw pass-through (`Elke27Client(enable_raw_passthrough=True)` and
 `async_raw_request(..., allow_installer=True)`). The installer code goes only
 through elke27's `control_authenticate`. The tool's own link is read from the
 JSON file named by `ELK_TEST_LINK_FILE` (`host`, `port`, `own_link_sn`,
-`link_keys`). Keep that file outside any repo and the vault, and never use the HA
-entry's link. elke27 is pinned to the `feat/raw-passthrough` branch until it's
+`link_keys`). The file must be mode 0600 and outside any git repo and the vault (the tool refuses otherwise, and never logs its path or contents). Never use the HA
+entry's link. Installer codes with a leading zero are refused (the panel pin is numeric). elke27 is pinned to the `feat/raw-passthrough` branch until it's
 released. Not yet run against any panel.

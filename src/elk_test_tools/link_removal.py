@@ -311,10 +311,12 @@ def _run_connected(
     def authenticate() -> None:
         install_redaction()
         try:
-            # Digits only; the panel takes the pin as an integer. Leading zeros are
-            # dropped in the integer form, which add_secret() also redacts.
+            # Digits only; the panel's authenticate pin is a JSON number, so a leading
+            # zero cannot be sent. Refuse it, matching elke27's control_authenticate.
             if code is None or not code.isdigit():
                 raise ValueError
+            if len(code) > 1 and code.startswith("0"):
+                raise AbortError(f"{ENV_INSTALLER_CODE} has a leading zero; not supported")
             pin = int(code)
         except (TypeError, ValueError):
             raise AbortError(f"{ENV_INSTALLER_CODE} is not numeric") from None

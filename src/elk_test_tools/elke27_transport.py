@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import stat
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,30 @@ from typing import Any
 from elk_test_tools.link_removal import HA_PROTECTED_SN, REDACTOR, SN_RE, AbortError
 
 ENV_LINK_FILE = "ELK_TEST_LINK_FILE"
+VAULT_ROOT = Path("/workspace/obsidian")
+
+
+def check_link_file(path: Path, vault_root: Path = VAULT_ROOT) -> Path:
+    """Refuse a link file that is group/other accessible, inside a git repo, or
+    under the vault. Errors never include the path or contents."""
+    try:
+        real = path.resolve(strict=True)
+        st = real.stat()
+    except OSError:
+        raise AbortError(f"cannot read the link file named by {ENV_LINK_FILE}") from None
+    if not stat.S_ISREG(st.st_mode):
+        raise AbortError("link file is not a regular file")
+    if st.st_mode & 0o077:
+        raise AbortError("link file must be mode 0600 (no group/other access)")
+    vault = vault_root.resolve()
+    if real == vault or vault in real.parents:
+        raise AbortError("link file must not be inside the vault")
+    for parent in real.parents:
+        if (parent / ".git").exists():
+            raise AbortError("link file must not be inside a git repository")
+    return real
+
+
 CONNECT_READY_TIMEOUT_S = 30.0
 
 
@@ -45,8 +70,9 @@ class Elke27Transport:
         path = env.get(ENV_LINK_FILE)
         if not path:
             raise AbortError(f"{ENV_LINK_FILE} is not set (the tool's own link file)")
+        real = check_link_file(Path(path))
         try:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            data = json.loads(real.read_text(encoding="utf-8"))
             return cls(data["host"], data["port"], data["own_link_sn"], data["link_keys"])
         except (OSError, ValueError, KeyError, TypeError):
             raise AbortError(f"cannot read the link file named by {ENV_LINK_FILE}") from None
@@ -101,6 +127,8 @@ class Elke27Transport:
         return "not observed (live transport)"
 
     def authenticate(self, code: str) -> bool:
+        if not code.isdigit() or (len(code) > 1 and code.startswith("0")):
+            return False  # link_removal rejects these first; elke27 would too
         result = self._run(self._client.async_execute("control_authenticate", pin=code))
         return bool(result.ok)
 
