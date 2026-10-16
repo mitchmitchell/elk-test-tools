@@ -10,9 +10,9 @@ below once merged.
 Removes specific links from the **TEST** panel only. Dry-run by default.
 
 ```
-elk-remove-test-link --protect 119112725266 \
+elk-remove-test-link \
     --remove 246915998877 --expect-name "Old Link A"                            # dry run
-ELK_TEST_INSTALLER_CODE=... elk-remove-test-link --protect 119112725266 \
+ELK_TEST_INSTALLER_CODE=... elk-remove-test-link \
     --remove 246915998877 --expect-name "Old Link A" \
     --apply --log-file link-removal-log.md                                      # delete
 ```
@@ -21,10 +21,14 @@ Guardrails (hard-coded, not overridable):
 - Refuses unless the panel MAC is `cc031eb03b20`, and every `--remove` serial has the
   matching Network Devices name in `--expect-name`.
 - Connects over the tool's **own dedicated link**, never the TEST HA entry's link.
-- `--protect SERIAL` (12 hex, repeatable) is **required**: every run, dry-run included,
-  refuses without at least one. No serials are built in (Mitch, Oct 16 2026). The tool's
-  own link is always protected. Hitting a protected link aborts the whole run. A
-  protected link already absent before the run is not required to appear afterwards.
+- Protected list (decision 41) = the tool's own link (`own_link_sn`, always) + the link
+  file's optional `"protect"` array (12-hex serials; `elk-link-test-tool` writes
+  `"protect": []`, edit it to add e.g. the TEST HA entry's link) + optional
+  `--protect SERIAL` (12 hex, repeatable) for a single run. No serials are built in.
+  The tool runs fine with an empty list. A malformed `"protect"` array or link file
+  aborts. A `--remove` of a protected serial aborts the whole run; only the exact
+  `--remove` serials are ever deleted. A protected link already absent before the run
+  is not required to appear afterwards.
 - **Touch screens are never removed**, blocked by device type rather than serial. The
   type is the `mn` (model number) from `net_dev.get_list`. Only `mn` 222 (elke27/HA
   integration links) is removable. `mn` 100 (touch screen/tablet in the Dealer API
@@ -65,7 +69,7 @@ ELK_TEST_ACCESS_CODE=... ELK_TEST_PASSPHRASE=... elk-link-test-tool --host <TEST
 
 - Aborts unless discovery reports panel MAC `cc031eb03b20`.
 - Registers a new random 12-digit decimal client serial (HA's scheme, never HA's ID), mn 222.
-- Creates the link file atomically (O_EXCL, mode 0600). It never overwrites an existing
+- Creates the link file atomically (O_EXCL, mode 0600) with an empty `"protect": []` array. It never overwrites an existing
   file and refuses paths inside a git repo or under the vault.
 - Reports only success or failure. The serial, codes, keys and file path are never logged
   or printed (the serial is in the link file, and the tool auto-protects it). All logging

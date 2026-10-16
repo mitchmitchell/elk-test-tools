@@ -73,6 +73,7 @@ def test_links_with_own_serial_writes_0600_and_reports_only_success(tmp_path, ca
             "linkkey_hex": KEYS.linkkey_hex,
             "linkhmac_hex": KEYS.linkhmac_hex,
         },
+        "protect": [],
     }
     assert client.link_calls[0]["client_identity"] == {"mn": "222", "sn": SERIAL}
     for secret in (ACCESS, PASSPH, KEYS.linkkey_hex, str(f), SERIAL):

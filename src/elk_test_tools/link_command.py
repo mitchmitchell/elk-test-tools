@@ -139,7 +139,8 @@ def run_link(
         for value in keys.values():
             REDACTOR.add_secret(value)
         _write_exclusive(
-            target, {"host": host, "port": port, "own_link_sn": serial, "link_keys": keys}
+            target,
+            {"host": host, "port": port, "own_link_sn": serial, "link_keys": keys, "protect": []},
         )
     finally:
         access = passph = None

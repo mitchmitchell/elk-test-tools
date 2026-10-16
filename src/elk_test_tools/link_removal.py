@@ -4,9 +4,9 @@ Safety properties (all enforced in code, none overridable):
 - Runs only when the connected panel MAC is TEST_PANEL_MAC.
 - Every target needs an exact 12-hex serial (--remove) AND the matching
   Network Devices name (--expect-name); any mismatch aborts the whole run.
-- Every run needs at least one --protect <12-hex serial> (repeatable). The
-  tool's own link is always protected (decision 32). No serials are built in
-  (Mitch, Oct 16 2026). Nothing can remove a protection.
+- Protections (decision 41): the tool's own link (own_link_sn) always, plus the
+  link file's optional "protect" array, plus optional --protect serials for one
+  run. No serials are built in. Nothing can remove a protection.
 - Touch screens are never removed: blocked by device type (get_list "mn"), not
   serial. Unknown or missing type counts as a touch screen (fail closed).
 - There is no remove-all path; ``net_dev.default`` is never sent.
@@ -70,6 +70,7 @@ class Transport(Protocol):
     def authenticate(self, code: str) -> bool: ...
     def area_arm_states(self) -> Mapping[int, str]: ...
     def observe_session(self, sn: str) -> str: ...
+    def file_protected(self) -> frozenset[str]: ...
 
 
 # --------------------------------------------------------------------------- redaction
@@ -236,18 +237,26 @@ def inventory(t: Transport) -> list[Slot]:
     return slots
 
 
-def protected_serials(protects: list[str]) -> frozenset[str]:
-    """The --protect serials (at least one, 12 hex each) plus DEFAULT_PROTECTED_SNS.
-    Additive only; a missing or malformed --protect aborts before connecting."""
-    if not protects:
-        raise AbortError("at least one --protect SERIAL is required")
+def parse_serials(values: Any, source: str) -> frozenset[str]:
+    """Validate a list of 12-hex serials (from --protect or the link file's
+    "protect" array). Malformed input aborts before connecting."""
+    if not isinstance(values, (list, tuple)):
+        raise AbortError(f"{source} must be a list of serials")
     given: set[str] = set()
-    for raw in protects:
-        sn = raw.strip().upper()
+    for raw in values:
+        sn = raw.strip().upper() if isinstance(raw, str) else ""
         if not SN_RE.match(sn):
-            raise AbortError(f"invalid --protect serial {raw!r}: need exactly 12 hex chars")
+            raise AbortError(f"invalid serial in {source}: need exactly 12 hex chars")
         given.add(sn)
-    return DEFAULT_PROTECTED_SNS | given
+    return frozenset(given)
+
+
+def protected_serials(
+    protects: list[str], file_protected: frozenset[str] = frozenset()
+) -> frozenset[str]:
+    """Run protections = link file "protect" array + optional --protect serials
+    (decision 41). The tool's own link is added once connected."""
+    return DEFAULT_PROTECTED_SNS | file_protected | parse_serials(protects, "--protect")
 
 
 def validate_targets(
@@ -297,12 +306,12 @@ def run(
     apply: bool,
     env: MutableMapping[str, str],
     confirm: Callable[[str], str],
-    protects: list[str],
+    protects: list[str] | None = None,
     out: Callable[[str], None] = print,
     clock: Callable[[], float] = time.monotonic,
 ) -> RunResult:
     install_redaction()
-    base_protected = protected_serials(protects)
+    base_protected = protected_serials(protects or [], transport.file_protected())
     targets = validate_targets(removes, expect_names, base_protected)
     target_sns = {s for s, _ in targets}
     result = RunResult()
@@ -498,8 +507,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="SN",
-        help="12-hex link serial that must never be removed (required, repeatable); "
-        "the tool's own link is always protected",
+        help="extra 12-hex serial to protect for this run (optional, repeatable); adds to "
+        "the link file's protect list and the tool's own link",
     )
     p.add_argument(
         "--apply",

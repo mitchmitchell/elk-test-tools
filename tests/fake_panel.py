@@ -26,6 +26,7 @@ class FakePanel:
             6: {"sn": "0100" + TOUCH_SN, "name": "Frnt Door Tblt", "mn": " 100"},
         }
         self.slots = 8
+        self.file_protect: list[str] = []  # link file "protect" array
         self.areas = {1: "DISARMED", 2: "DISARMED"}
         self.frames: list[dict[str, Any]] = []
         self.authed = False
@@ -44,6 +45,9 @@ class FakePanel:
 
     def own_link_sn(self) -> str:
         return OWN_SN
+
+    def file_protected(self) -> frozenset[str]:
+        return frozenset(self.file_protect)
 
     def area_arm_states(self):
         return dict(self.areas)

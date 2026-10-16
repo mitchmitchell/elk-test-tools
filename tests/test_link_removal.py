@@ -378,17 +378,46 @@ def test_no_built_in_serials():
     assert lr.DEFAULT_PROTECTED_SNS == frozenset()
 
 
-def test_missing_protect_refuses_even_dry_run():
-    p = FakePanel()
-    with pytest.raises(lr.AbortError, match="--protect"):
-        go(p, protects=())
-    assert not p.connected and p.frames == []
+@pytest.mark.parametrize("bad", ["119112725266", [123], ["xyz"], [""], {"sn": 1}])
+def test_parse_serials_rejects_malformed(bad):
+    with pytest.raises(lr.AbortError):
+        lr.parse_serials(bad, "protect")
 
 
-def test_cli_missing_protect_refuses(capsys):
+def test_runs_without_any_protect_protecting_own_link():
     p = FakePanel()
-    assert lr.main(["--remove", A, "--expect-name", "Old Link A"], transport=p) == 2
-    assert "--protect" in capsys.readouterr().err and p.frames == []
+    res = go(p, protects=(), apply=True)
+    assert res.removed == [A]
+    with pytest.raises(lr.AbortError, match="protected"):
+        go(FakePanel(), removes=(OWN_SN,), names=("elk-test-tools",), protects=())
+
+
+def test_cli_protect_is_optional(capsys):
+    p = FakePanel()
+    assert lr.main(["--remove", A, "--expect-name", "Old Link A"], transport=p) == 0
+    assert "DRY RUN" in capsys.readouterr().out
+
+
+def test_link_file_protect_array_is_honoured():
+    p = FakePanel()
+    p.file_protect = [BASELINE_SN]
+    with pytest.raises(lr.AbortError, match="protected"):
+        go(p, removes=(BASELINE_SN,), names=("HA TEST 0.2.0",), protects=(), apply=True)
+    assert "del_attribs" not in kinds(p)
+
+
+def test_cli_protect_adds_to_file_protect():
+    p = FakePanel()
+    p.file_protect = [BASELINE_SN]
+    with pytest.raises(lr.AbortError, match="protected"):
+        go(p, removes=(A,), names=("Old Link A",), protects=(A,))
+    assert lr.protected_serials([A], frozenset({BASELINE_SN})) == {A, BASELINE_SN}
+
+
+def test_only_exact_remove_serials_are_removed():
+    p = FakePanel()
+    res = go(p, removes=(B,), names=("Old Link B",), protects=(), apply=True)
+    assert res.removed == [B] and set(p.devices) == {1, 2, 3, 5, 6}
 
 
 def test_repeated_protect_all_apply():
