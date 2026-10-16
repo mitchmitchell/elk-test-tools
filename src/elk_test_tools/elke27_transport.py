@@ -83,11 +83,12 @@ class Elke27Transport:
         self._client: Any = None
 
     @classmethod
-    def from_env(cls, env: MutableMapping[str, str]) -> Elke27Transport:
+    def from_env(cls, env: MutableMapping[str, str], protects: list[str]) -> Elke27Transport:
         path = env.get(ENV_LINK_FILE)
         if not path:
             raise AbortError(f"{ENV_LINK_FILE} is not set (the tool's own link file)")
-        protected = protected_serials(env)
+        # Same shared list as the removal check (--protect serials).
+        protected = protected_serials(protects)
         real = check_link_file(Path(path))
         try:
             data = json.loads(real.read_text(encoding="utf-8"))

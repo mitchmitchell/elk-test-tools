@@ -4,10 +4,11 @@ Safety properties (all enforced in code, none overridable):
 - Runs only when the connected panel MAC is TEST_PANEL_MAC.
 - Every target needs an exact 12-hex serial (--remove) AND the matching
   Network Devices name (--expect-name); any mismatch aborts the whole run.
-- Built-in protected links (DEFAULT_PROTECTED_SNS: TEST HA baseline link
-  119112725266 and the retired 2CCF67CA1AE0) and the tool's own link are always
-  protected. ELK_TEST_EXTRA_PROTECTED can only ADD serials; defaults can never
-  be removed.
+- Every run needs at least one --protect <12-hex serial> (repeatable). The
+  tool's own link is always protected (decision 32). No serials are built in
+  (Mitch, Oct 16 2026). Nothing can remove a protection.
+- Touch screens are never removed: blocked by device type (get_list "mn"), not
+  serial. Unknown or missing type counts as a touch screen (fail closed).
 - There is no remove-all path; ``net_dev.default`` is never sent.
 - Dry-run by default; ``--apply`` plus typing the TEST MAC is required to delete.
 - The installer code comes only from ELK_TEST_INSTALLER_CODE, is read only on
@@ -32,11 +33,17 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 TEST_PANEL_MAC = "cc031eb03b20"
-# Built-in protections. Never shrink this at runtime; config can only add.
-BASELINE_PROTECTED_SN = "119112725266"  # TEST HA 0.2.0 baseline link (Oct 16 2026)
-HA_PROTECTED_SN = "2CCF67CA1AE0"  # retired baseline link, kept protected (harmless)
-DEFAULT_PROTECTED_SNS: frozenset[str] = frozenset({BASELINE_PROTECTED_SN, HA_PROTECTED_SN})
-ENV_EXTRA_PROTECTED = "ELK_TEST_EXTRA_PROTECTED"
+# No built-in serials (Mitch, Oct 16 2026 4:53 PM CT: --protect only). Protection
+# = required --protect serials + the tool's own link + touch screens by type.
+DEFAULT_PROTECTED_SNS: frozenset[str] = frozenset()
+
+# Device type comes from net_dev.get_list "mn" (model number; Dealer API
+# net_dev_get_list: "list of network device names and mn numbers"). Only mn
+# values known to be integration links are removable; elke27/HA links use "222".
+# mn "100" is the touch screen/tablet model in the API examples. Anything else,
+# including a missing mn, is treated as a touch screen (fail closed).
+REMOVABLE_MN: frozenset[str] = frozenset({"222"})
+TOUCH_SCREEN_MN = "100"
 ENV_INSTALLER_CODE = "ELK_TEST_INSTALLER_CODE"
 MAX_TARGETS = 6
 REAUTH_AFTER_S = 50.0  # panel drops PIN auth after 60 s idle
@@ -155,6 +162,17 @@ class Slot:
     net_dev_id: int
     sn: str
     name: str
+    mn: str | None = None
+
+    @property
+    def touch_screen_reason(self) -> str | None:
+        """Why this slot is a protected touch screen, or None if removable by type."""
+        mn = (self.mn or "").strip()
+        if mn in REMOVABLE_MN:
+            return None
+        if mn == TOUCH_SCREEN_MN:
+            return "touch screen"
+        return "touch screen (type unknown)"
 
 
 @dataclass
@@ -181,36 +199,55 @@ def _ok(reply: Mapping[str, Any], *path: str) -> Mapping[str, Any]:
     return node
 
 
+def _list_entries(reply: Mapping[str, Any]) -> list[tuple[int, str, str | None]]:
+    """(net_dev_id, name, mn) from get_list. Accepts the documented parallel
+    arrays ``{"name": [...], "mn": [...]}`` (slot = index + 1) and the
+    ``{"list": [{"net_dev_id", "name", "mn"}]}`` shape."""
+    out: list[tuple[int, str, str | None]] = []
+    if isinstance(reply.get("list"), list):
+        for entry in reply["list"]:
+            i = entry.get("net_dev_id")
+            if isinstance(i, int) and entry.get("name"):
+                mn = entry.get("mn")
+                out.append((i, str(entry["name"]), None if mn is None else str(mn)))
+        return out
+    names = reply.get("name")
+    mns = reply.get("mn")
+    if isinstance(names, list):
+        for idx, name in enumerate(names):
+            if not name:
+                continue
+            mn = mns[idx] if isinstance(mns, list) and idx < len(mns) else None
+            out.append((idx + 1, str(name), None if mn in (None, "") else str(mn)))
+    return out
+
+
 def inventory(t: Transport) -> list[Slot]:
     reply = _ok(t.request({"net_dev": {"get_list": 1}}), "net_dev", "get_list")
     slots: list[Slot] = []
-    for entry in reply.get("list", []):
-        i = entry.get("net_dev_id")
-        if not isinstance(i, int) or not entry.get("name"):
-            continue
+    for i, name, mn in _list_entries(reply):
         a = _ok(
             t.request({"net_dev": {"get_attribs": {"net_dev_id": i}}}),
             "net_dev",
             "get_attribs",
         )
         sn = str(a.get("sn", "")).upper()[-12:]
-        slots.append(Slot(i, sn, str(a.get("name", entry.get("name")))))
+        slots.append(Slot(i, sn, str(a.get("name", name)), mn))
     return slots
 
 
-def protected_serials(env: Mapping[str, str]) -> frozenset[str]:
-    """DEFAULT_PROTECTED_SNS plus any serials in ELK_TEST_EXTRA_PROTECTED
-    (comma/space separated, 12 hex each). Additive only: there is no way to drop
-    a default. A malformed entry aborts (fail closed)."""
-    extra: set[str] = set()
-    for raw in re.split(r"[,\s]+", env.get(ENV_EXTRA_PROTECTED, "").strip()):
-        if not raw:
-            continue
-        sn = raw.upper()
+def protected_serials(protects: list[str]) -> frozenset[str]:
+    """The --protect serials (at least one, 12 hex each) plus DEFAULT_PROTECTED_SNS.
+    Additive only; a missing or malformed --protect aborts before connecting."""
+    if not protects:
+        raise AbortError("at least one --protect SERIAL is required")
+    given: set[str] = set()
+    for raw in protects:
+        sn = raw.strip().upper()
         if not SN_RE.match(sn):
-            raise AbortError(f"{ENV_EXTRA_PROTECTED} has an invalid serial {raw!r}")
-        extra.add(sn)
-    return DEFAULT_PROTECTED_SNS | extra
+            raise AbortError(f"invalid --protect serial {raw!r}: need exactly 12 hex chars")
+        given.add(sn)
+    return DEFAULT_PROTECTED_SNS | given
 
 
 def validate_targets(
@@ -238,10 +275,16 @@ def validate_targets(
 
 
 def _fmt(slots: list[Slot], targets: set[str], protected: set[str]) -> str:
-    rows = ["slot  sn            action   name"]
+    rows = ["slot  sn            action   name  [reason]"]
     for s in slots:
-        act = "DELETE" if s.sn in targets else ("PROTECT" if s.sn in protected else "keep")
-        rows.append(f"{s.net_dev_id:<5} {s.sn}  {act:<8} {s.name}")
+        reason = s.touch_screen_reason
+        if reason:
+            act, why = "PROTECT", f"  [{reason}]"
+        elif s.sn in protected:
+            act, why = "PROTECT", ""
+        else:
+            act, why = ("DELETE" if s.sn in targets else "keep"), ""
+        rows.append(f"{s.net_dev_id:<5} {s.sn}  {act:<8} {s.name}{why}")
     return "\n".join(rows)
 
 
@@ -254,11 +297,12 @@ def run(
     apply: bool,
     env: MutableMapping[str, str],
     confirm: Callable[[str], str],
+    protects: list[str],
     out: Callable[[str], None] = print,
     clock: Callable[[], float] = time.monotonic,
 ) -> RunResult:
     install_redaction()
-    base_protected = protected_serials(env)
+    base_protected = protected_serials(protects)
     targets = validate_targets(removes, expect_names, base_protected)
     target_sns = {s for s, _ in targets}
     result = RunResult()
@@ -315,9 +359,11 @@ def _run_connected(
         raise AbortError("cannot determine the tool's own link serial; refusing")
     protected = set(base_protected | DEFAULT_PROTECTED_SNS) | {own}
     if target_sns & protected:
-        raise AbortError("a target is protected (built-in/configured list or the tool's own link)")
+        raise AbortError("a target is protected (--protect or the tool's own link)")
 
     result.before = inventory(t)
+    # Touch screens join the protected set (verify checks they survive too).
+    protected |= {s.sn for s in result.before if s.touch_screen_reason}
     by_sn = {s.sn: s for s in result.before}
     for sn, name in targets:
         slot = by_sn.get(sn)
@@ -325,6 +371,8 @@ def _run_connected(
             raise AbortError(f"{sn} not linked on this panel")
         if slot.name != name:
             raise AbortError(f"{sn} name {slot.name!r} != --expect-name {name!r}")
+        if slot.touch_screen_reason:
+            raise AbortError(f"{sn} is protected: {slot.touch_screen_reason}")
 
     out(_fmt(result.before, target_sns, protected))
     if not apply:
@@ -374,7 +422,7 @@ def _run_connected(
             )
             if str(a.get("sn", "")).upper()[-12:] != sn:
                 raise AbortError(f"slot {slot.net_dev_id} no longer holds {sn}; stopping")
-            if sn in protected:  # belt and braces
+            if sn in protected or slot.touch_screen_reason:  # belt and braces
                 raise AbortError("protected target reached delete step")
             _ok(
                 t.request({"net_dev": {"del_attribs": {"net_dev_id": slot.net_dev_id}}}),
@@ -446,6 +494,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Network Devices name each --remove must have (same order)",
     )
     p.add_argument(
+        "--protect",
+        action="append",
+        default=[],
+        metavar="SN",
+        help="12-hex link serial that must never be removed (required, repeatable); "
+        "the tool's own link is always protected",
+    )
+    p.add_argument(
         "--apply",
         action="store_true",
         help=f"actually delete (otherwise dry-run); installer code from {ENV_INSTALLER_CODE}",
@@ -459,10 +515,10 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def make_live_transport() -> Transport:
+def make_live_transport(protects: list[str]) -> Transport:
     from elk_test_tools.elke27_transport import Elke27Transport
 
-    return Elke27Transport.from_env(os.environ)
+    return Elke27Transport.from_env(os.environ, protects)
 
 
 def main(argv: list[str] | None = None, transport: Transport | None = None) -> int:
@@ -470,7 +526,7 @@ def main(argv: list[str] | None = None, transport: Transport | None = None) -> i
     logging.basicConfig(level=logging.INFO)
     install_redaction()
     try:
-        t = transport or make_live_transport()
+        t = transport or make_live_transport(args.protect)
         res = run(
             transport=t,
             removes=args.remove,
@@ -478,6 +534,7 @@ def main(argv: list[str] | None = None, transport: Transport | None = None) -> i
             apply=args.apply,
             env=os.environ,
             confirm=input,
+            protects=args.protect,
         )
         if args.log_file:
             append_log(args.log_file, TEST_PANEL_MAC, res)

@@ -35,9 +35,6 @@ def _t(client: FakeClient) -> et.Elke27Transport:
 
 
 def test_refuses_ha_link_and_bad_sn():
-    for sn in lr.DEFAULT_PROTECTED_SNS:
-        with pytest.raises(lr.AbortError, match="HA entry"):
-            et.Elke27Transport("h", 1, sn, KEYS)
     with pytest.raises(lr.AbortError, match="HA entry"):
         et.Elke27Transport("h", 1, "AABBCCDDEEFF", KEYS, frozenset({"AABBCCDDEEFF"}))
     with pytest.raises(lr.AbortError, match="12 hex"):
@@ -58,7 +55,7 @@ def test_unreadable_link_file_message_has_no_contents(tmp_path):
     f.write_text(json.dumps({"host": "h", "link_keys": KEYS}))
     f.chmod(0o600)
     with pytest.raises(lr.AbortError) as ei:
-        et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(f)})
+        et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(f)}, ["119112725266"])
     assert KEYS["linkkey_hex"] not in str(ei.value)
 
 
@@ -103,7 +100,7 @@ def _link_file(d, mode=0o600):
 def test_link_file_ok_when_private(tmp_path):
     f = _link_file(tmp_path)
     assert et.check_link_file(f, vault_root=tmp_path / "vault") == f.resolve()
-    t = et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(f)})
+    t = et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(f)}, ["119112725266"])
     assert t.own_link_sn() == "AABBCCDDEEFF"
     lr.REDACTOR.clear()
 
@@ -148,7 +145,7 @@ def test_link_file_symlink_into_vault_refused(tmp_path):
 def test_missing_link_file_message_has_no_path(tmp_path):
     p = tmp_path / "nope.json"
     with pytest.raises(lr.AbortError) as ei:
-        et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(p)})
+        et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(p)}, ["119112725266"])
     assert str(p) not in str(ei.value)
 
 
@@ -160,6 +157,8 @@ def test_authenticate_refuses_leading_zero_without_sending():
 
 def test_from_env_uses_shared_extra_protected_list(tmp_path):
     f = _link_file(tmp_path)
-    env = {et.ENV_LINK_FILE: str(f), lr.ENV_EXTRA_PROTECTED: "AABBCCDDEEFF"}
+    env = {et.ENV_LINK_FILE: str(f)}
     with pytest.raises(lr.AbortError, match="HA entry"):
-        et.Elke27Transport.from_env(env)
+        et.Elke27Transport.from_env(env, ["119112725266", "AABBCCDDEEFF"])
+    with pytest.raises(lr.AbortError, match="--protect"):
+        et.Elke27Transport.from_env(env, [])

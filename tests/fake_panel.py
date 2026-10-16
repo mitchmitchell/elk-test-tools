@@ -8,6 +8,7 @@ from typing import Any
 OWN_SN = "AABBCCDDEEFF"
 HA_SN = "2CCF67CA1AE0"
 BASELINE_SN = "119112725266"
+TOUCH_SN = "0CC03EB00001"
 SECRET = "987654"
 
 
@@ -17,12 +18,14 @@ class FakePanel:
         self.pin = int(pin)
         self.installer_ok = True
         self.devices: dict[int, dict[str, str]] = {
-            1: {"sn": "0100" + HA_SN, "name": "HA TEST"},
-            2: {"sn": "0100" + OWN_SN, "name": "elk-test-tools"},
-            3: {"sn": "0100246915998877", "name": "Old Link A"},
-            4: {"sn": "0100727007405425", "name": "Old Link B"},
-            5: {"sn": "0100" + BASELINE_SN, "name": "HA TEST 0.2.0"},
+            1: {"sn": "0100" + HA_SN, "name": "HA TEST", "mn": "222"},
+            2: {"sn": "0100" + OWN_SN, "name": "elk-test-tools", "mn": "222"},
+            3: {"sn": "0100246915998877", "name": "Old Link A", "mn": "222"},
+            4: {"sn": "0100727007405425", "name": "Old Link B", "mn": "222"},
+            5: {"sn": "0100" + BASELINE_SN, "name": "HA TEST 0.2.0", "mn": "222"},
+            6: {"sn": "0100" + TOUCH_SN, "name": "Frnt Door Tblt", "mn": " 100"},
         }
+        self.slots = 8
         self.areas = {1: "DISARMED", 2: "DISARMED"}
         self.frames: list[dict[str, Any]] = []
         self.authed = False
@@ -65,11 +68,15 @@ class FakePanel:
         if "get_list" in nd:
             return {
                 "net_dev": {
+                    # Documented Dealer API shape: parallel name/mn arrays, slot = index + 1.
                     "get_list": {
                         "error_code": 0,
-                        "list": [
-                            {"net_dev_id": i, "name": d["name"]}
-                            for i, d in sorted(self.devices.items())
+                        "name": [
+                            self.devices.get(i, {}).get("name", "")
+                            for i in range(1, self.slots + 1)
+                        ],
+                        "mn": [
+                            self.devices.get(i, {}).get("mn", "") for i in range(1, self.slots + 1)
                         ],
                     }
                 }
@@ -81,7 +88,8 @@ class FakePanel:
             d = self.devices.get(i)
             if d is None:
                 return {"net_dev": {"get_attribs": {"error_code": 5}}}
-            return {"net_dev": {"get_attribs": {"error_code": 0, "net_dev_id": i, **d}}}
+            attrs = {k: v for k, v in d.items() if k != "mn"}  # mn only via get_list
+            return {"net_dev": {"get_attribs": {"error_code": 0, "net_dev_id": i, **attrs}}}
         if "del_attribs" in nd:
             if not self.authed:
                 return {"net_dev": {"del_attribs": {"error_code": 7}}}
