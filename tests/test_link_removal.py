@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from elk_test_tools import link_removal as lr
-from tests.fake_panel import BASELINE_SN, HA_SN, OWN_SN, SECRET, FakePanel
+from tests.fake_panel import BASELINE_SN, HA_SN, OWN_SN, SECRET, TOUCH_SN, FakePanel
 
 A, B = "246915998877", "727007405425"
 
@@ -15,9 +15,7 @@ class NoTouchEnv(dict):
     def pop(self, *a, **k):
         raise AssertionError("dry-run must not read the installer code")
 
-    def get(self, key, default=None):
-        if key == lr.ENV_EXTRA_PROTECTED:  # protection config is fine to read
-            return default
+    def get(self, *a, **k):
         raise AssertionError("dry-run must not read the installer code")
 
     __getitem__ = get
@@ -31,6 +29,7 @@ def go(
     env=None,
     confirm="cc031eb03b20",
     out=None,
+    protects=(BASELINE_SN,),
 ):
     return lr.run(
         transport=panel,
@@ -39,6 +38,7 @@ def go(
         apply=apply,
         env={lr.ENV_INSTALLER_CODE: SECRET} if env is None else env,
         confirm=lambda _p: confirm,
+        protects=list(protects),
         out=out or (lambda _s: None),
     )
 
@@ -55,14 +55,19 @@ def test_dry_run_is_default_and_never_reads_code():
     res = go(p, env=NoTouchEnv())
     assert not res.applied and res.actions == ["dry-run"]
     assert "del_attribs" not in kinds(p) and "authenticate" not in kinds(p)
-    assert len(p.devices) == 5
+    assert len(p.devices) == 6
 
 
 def test_cli_dry_run_default(capsys, monkeypatch):
     monkeypatch.delenv(lr.ENV_INSTALLER_CODE, raising=False)
     p = FakePanel()
-    assert lr.main(["--remove", A, "--expect-name", "Old Link A"], transport=p) == 0
-    assert "DRY RUN" in capsys.readouterr().out and len(p.devices) == 5
+    assert (
+        lr.main(
+            ["--remove", A, "--expect-name", "Old Link A", "--protect", BASELINE_SN], transport=p
+        )
+        == 0
+    )
+    assert "DRY RUN" in capsys.readouterr().out and len(p.devices) == 6
 
 
 def test_wrong_mac_refuses_before_anything():
@@ -84,19 +89,19 @@ def test_expect_name_required_per_target():
         go(FakePanel(), removes=(A, B), names=("Old Link A",))
 
 
-@pytest.mark.parametrize("sn", [HA_SN, HA_SN.lower(), OWN_SN, BASELINE_SN])
+@pytest.mark.parametrize("sn", [OWN_SN, OWN_SN.lower(), BASELINE_SN])
 def test_protected_links_never_removed(sn):
     p = FakePanel()
     with pytest.raises(lr.AbortError, match="protected"):
         go(p, removes=(sn,), names=("x",), apply=True)
-    assert "del_attribs" not in kinds(p) and len(p.devices) == 5
+    assert "del_attribs" not in kinds(p) and len(p.devices) == 6
 
 
 def test_protected_target_aborts_whole_run():
     p = FakePanel()
     with pytest.raises(lr.AbortError, match="protected"):
         go(p, removes=(A, OWN_SN), names=("Old Link A", "elk-test-tools"), apply=True)
-    assert len(p.devices) == 5
+    assert len(p.devices) == 6
 
 
 @pytest.mark.parametrize("bad", ["all", "*", "ALL", "24691599887", "24691599887Z", ""])
@@ -147,7 +152,7 @@ def test_bad_auth_single_attempt():
     p.installer_ok = False
     with pytest.raises(lr.AbortError, match="not retrying"):
         go(p, apply=True)
-    assert kinds(p).count("authenticate") == 1 and len(p.devices) == 5
+    assert kinds(p).count("authenticate") == 1 and len(p.devices) == 6
 
 
 def test_slot_reuse_detected_before_delete():
@@ -171,7 +176,7 @@ def test_apply_removes_verifies_and_reports_session():
     lines = []
     res = go(p, removes=(A, B), names=("Old Link A", "Old Link B"), apply=True, out=lines.append)
     assert res.applied and res.removed == [A, B]
-    assert set(p.devices) == {1, 2, 5}
+    assert set(p.devices) == {1, 2, 5, 6}
     assert res.sessions == {A: "dropped (fake panel)", B: "dropped (fake panel)"}
     assert any("session after delete" in s for s in lines)
     k = kinds(p)
@@ -193,6 +198,7 @@ def test_reauth_after_idle():
         apply=True,
         env={lr.ENV_INSTALLER_CODE: SECRET},
         confirm=lambda _: "cc031eb03b20",
+        protects=[BASELINE_SN],
         out=lambda _s: None,
         clock=lambda: next(t),
     )
@@ -320,6 +326,8 @@ def test_partial_deletion_is_logged_on_abort(tmp_path, monkeypatch):
             B,
             "--expect-name",
             "Old Link B",
+            "--protect",
+            BASELINE_SN,
             "--apply",
             "--log-file",
             str(log),
@@ -341,48 +349,88 @@ def test_late_logger_and_leading_zero_redacted(caplog):
         lr.REDACTOR.clear()
 
 
-# --- config-driven protections (additive only) -----------------------------------
-def test_defaults_always_protect_baseline_and_retired_link():
-    assert {"119112725266", "2CCF67CA1AE0"} <= lr.DEFAULT_PROTECTED_SNS
-    assert lr.protected_serials({}) == lr.DEFAULT_PROTECTED_SNS
-    assert isinstance(lr.DEFAULT_PROTECTED_SNS, frozenset)
+# --- --protect (Mitch, Oct 16 2026 4:53 PM CT: --protect only, no built-ins) ----
+def test_no_built_in_serials():
+    assert lr.DEFAULT_PROTECTED_SNS == frozenset()
 
 
-def test_extra_protected_only_adds():
-    got = lr.protected_serials({lr.ENV_EXTRA_PROTECTED: "246915998877, 727007405425"})
-    assert got == lr.DEFAULT_PROTECTED_SNS | {"246915998877", "727007405425"}
-
-
-@pytest.mark.parametrize("value", ["", " ", ",", "-119112725266", "!2CCF67CA1AE0"])
-def test_no_config_can_remove_a_default(value):
-    try:
-        got = lr.protected_serials({lr.ENV_EXTRA_PROTECTED: value})
-    except lr.AbortError:
-        return  # malformed config fails closed
-    assert lr.DEFAULT_PROTECTED_SNS <= got
-
-
-def test_malformed_extra_protected_aborts_before_connect():
+def test_missing_protect_refuses_even_dry_run():
     p = FakePanel()
-    with pytest.raises(lr.AbortError, match=lr.ENV_EXTRA_PROTECTED):
-        go(p, env={lr.ENV_EXTRA_PROTECTED: "not-a-serial"})
+    with pytest.raises(lr.AbortError, match="--protect"):
+        go(p, protects=())
     assert not p.connected and p.frames == []
 
 
-def test_extra_protected_target_aborts_whole_run():
+def test_cli_missing_protect_refuses(capsys):
     p = FakePanel()
-    with pytest.raises(lr.AbortError, match="protected"):
-        go(p, env={lr.ENV_EXTRA_PROTECTED: A})
-    assert p.frames == [] and len(p.devices) == 5
+    assert lr.main(["--remove", A, "--expect-name", "Old Link A"], transport=p) == 2
+    assert "--protect" in capsys.readouterr().err and p.frames == []
 
 
-def test_validate_targets_cannot_drop_defaults_via_argument():
-    with pytest.raises(lr.AbortError, match="protected"):
-        lr.validate_targets([lr.BASELINE_PROTECTED_SN], ["x"], frozenset())
-
-
-def test_retired_default_absent_from_panel_does_not_fail_verify():
+def test_repeated_protect_all_apply():
     p = FakePanel()
-    del p.devices[1]  # 2CCF67CA1AE0 already deleted on the panel
+    for sn in (A, B):
+        with pytest.raises(lr.AbortError, match="protected"):
+            go(p, removes=(sn,), names=("x",), protects=(BASELINE_SN, A, B))
+    assert lr.protected_serials([BASELINE_SN, A.lower(), B]) == {BASELINE_SN, A, B}
+
+
+@pytest.mark.parametrize("bad", ["", "xyz", "12345678901", "1234567890123", "11911272526G"])
+def test_bad_protect_serial_refused(bad):
+    p = FakePanel()
+    with pytest.raises(lr.AbortError, match="--protect"):
+        go(p, protects=(BASELINE_SN, bad))
+    assert p.frames == []
+
+
+def test_unprotected_former_baseline_is_removable_only_if_named():
+    # 2CCF67CA1AE0 is no longer built in: removable when not --protect'ed.
+    p = FakePanel()
+    res = go(p, removes=(HA_SN,), names=("HA TEST",), apply=True)
+    assert res.removed == [HA_SN]
+
+
+# --- touch screens: hard-blocked by type (get_list mn) ----------------------------
+def test_touch_screen_target_refused():
+    p = FakePanel()
+    with pytest.raises(lr.AbortError, match="touch screen"):
+        go(p, removes=(TOUCH_SN,), names=("Frnt Door Tblt",), apply=True)
+    assert "del_attribs" not in kinds(p) and len(p.devices) == 6
+
+
+@pytest.mark.parametrize("mn", [None, "", "999", "100"])
+def test_unknown_or_missing_type_is_protected(mn):
+    p = FakePanel()
+    if mn is None:
+        p.devices[3].pop("mn")
+    else:
+        p.devices[3]["mn"] = mn
+    with pytest.raises(lr.AbortError, match="touch screen"):
+        go(p, apply=True)  # target A sits in slot 3
+    assert "del_attribs" not in kinds(p)
+
+
+def test_dry_run_lists_touch_screen_as_protected():
+    p = FakePanel()
+    lines: list[str] = []
+    go(p, out=lines.append)
+    row = next(line for line in lines[0].splitlines() if TOUCH_SN in line)
+    assert "PROTECT" in row and "[touch screen]" in row
+
+
+def test_touch_screen_reason_classification():
+    assert lr.Slot(1, A, "x", "222").touch_screen_reason is None
+    assert lr.Slot(1, A, "x", " 100").touch_screen_reason == "touch screen"
+    assert lr.Slot(1, A, "x", None).touch_screen_reason == "touch screen (type unknown)"
+
+
+def test_list_shape_also_parsed():
+    reply = {"list": [{"net_dev_id": 4, "name": "n", "mn": "222"}, {"net_dev_id": 5, "name": ""}]}
+    assert lr._list_entries(reply) == [(4, "n", "222")]
+
+
+def test_protected_link_absent_before_does_not_fail_verify():
+    p = FakePanel()
+    del p.devices[5]  # --protect'ed baseline not on the panel
     res = go(p, apply=True)
     assert res.removed == [A]

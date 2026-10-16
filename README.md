@@ -10,21 +10,26 @@ below once merged.
 Removes specific links from the **TEST** panel only. Dry-run by default.
 
 ```
-elk-remove-test-link --remove 246915998877 --expect-name "Old Link A"            # dry run
-ELK_TEST_INSTALLER_CODE=... elk-remove-test-link --remove 246915998877 \
-    --expect-name "Old Link A" --apply --log-file link-removal-log.md          # delete
+elk-remove-test-link --protect 119112725266 \
+    --remove 246915998877 --expect-name "Old Link A"                            # dry run
+ELK_TEST_INSTALLER_CODE=... elk-remove-test-link --protect 119112725266 \
+    --remove 246915998877 --expect-name "Old Link A" \
+    --apply --log-file link-removal-log.md                                      # delete
 ```
 
 Guardrails (hard-coded, not overridable):
 - Refuses unless the panel MAC is `cc031eb03b20`, and every `--remove` serial has the
   matching Network Devices name in `--expect-name`.
 - Connects over the tool's **own dedicated link**, never the TEST HA entry's link.
-- Protected links: built-in `119112725266` (TEST HA 0.2.0 baseline), `2CCF67CA1AE0`
-  (retired baseline, kept protected) and the tool's own link. Hitting one aborts the run.
-  `ELK_TEST_EXTRA_PROTECTED` (comma/space-separated 12-hex serials) can only **add**
-  protections; there is no way to remove a built-in one, and a malformed entry aborts.
-  A protected link already absent from the panel before the run is not required to
-  appear afterwards.
+- `--protect SERIAL` (12 hex, repeatable) is **required**: every run, dry-run included,
+  refuses without at least one. No serials are built in (Mitch, Oct 16 2026). The tool's
+  own link is always protected. Hitting a protected link aborts the whole run. A
+  protected link already absent before the run is not required to appear afterwards.
+- **Touch screens are never removed**, blocked by device type rather than serial. The
+  type is the `mn` (model number) from `net_dev.get_list`. Only `mn` 222 (elke27/HA
+  integration links) is removable. `mn` 100 (touch screen/tablet in the Dealer API
+  examples), any other value, or a missing value is protected and shown as
+  `PROTECT [touch screen]` in the dry-run table.
 - No remove-all, no wildcards, max 6 exact 12-hex serials; `net_dev.default` is never sent.
 - `--apply` also needs all areas disarmed and the TEST MAC typed at a prompt.
 - Installer code: only from `ELK_TEST_INSTALLER_CODE`, read only on `--apply`, removed from
