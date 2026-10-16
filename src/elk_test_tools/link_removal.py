@@ -446,8 +446,8 @@ def _run_connected(
 
     after = {s.sn for s in result.after}
     left = target_sns & after
-    # Protected links must survive; ones already absent before (e.g. retired
-    # 2CCF67CA1AE0) are not required to appear.
+    # Protected links must survive; ones already absent before the run are not
+    # required to appear.
     missing = (protected & {s.sn for s in result.before}) - after
     result.applied = True
     out(_fmt(result.after, set(), protected))

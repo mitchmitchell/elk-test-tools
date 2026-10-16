@@ -407,8 +407,8 @@ def test_bad_protect_serial_refused(bad):
     assert p.frames == []
 
 
-def test_unprotected_former_baseline_is_removable_only_if_named():
-    # 2CCF67CA1AE0 is no longer built in: removable when not --protect'ed.
+def test_unprotected_link_is_removable_only_if_named():
+    # No built-in serials: an HA link is removable when named and not --protect'ed.
     p = FakePanel()
     res = go(p, removes=(HA_SN,), names=("HA TEST",), apply=True)
     assert res.removed == [HA_SN]
