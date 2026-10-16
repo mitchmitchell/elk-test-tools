@@ -8,8 +8,9 @@ Safety properties (all enforced in code, none overridable):
 - There is no remove-all path; ``net_dev.default`` is never sent.
 - Dry-run by default; ``--apply`` plus typing the TEST MAC is required to delete.
 - The installer code comes only from ELK_TEST_INSTALLER_CODE, is read only on
-  --apply, is removed from the process environment, is sent in exactly one
-  authenticate frame, and is never logged, printed or stored.
+  --apply, is removed from the process environment, is handed only to
+  ``Transport.authenticate`` (elke27's audited control_authenticate path), and
+  is never logged, printed or stored.
 - The tool connects over its own dedicated link, never the HA entry's link.
 """
 
@@ -25,7 +26,7 @@ import time
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 TEST_PANEL_MAC = "cc031eb03b20"
 HA_PROTECTED_SN = "2CCF67CA1AE0"
@@ -52,6 +53,7 @@ class Transport(Protocol):
     def panel_mac(self) -> str: ...
     def own_link_sn(self) -> str: ...
     def request(self, payload: Mapping[str, Any]) -> Mapping[str, Any]: ...
+    def authenticate(self, code: str) -> bool: ...
     def area_arm_states(self) -> Mapping[int, str]: ...
     def observe_session(self, sn: str) -> str: ...
 
@@ -316,9 +318,8 @@ def _run_connected(
             pin = int(code)
         except (TypeError, ValueError):
             raise AbortError(f"{ENV_INSTALLER_CODE} is not numeric") from None
-        reply = t.request({"authenticate": {"seq": 0, "pin": pin}})
-        node = reply.get("authenticate", {}) if isinstance(reply, Mapping) else {}
-        if node.get("error_code", -1) != 0 or node.get("installer") is not True:
+        del pin  # validated only; the transport sends the literal digits
+        if not t.authenticate(cast(str, code)):
             raise AbortError("installer authentication failed; not retrying")
         last_auth[0] = clock()
         result.actions.append("authenticate ok")
@@ -420,10 +421,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def make_live_transport() -> Transport:
-    raise AbortError(
-        "live transport not available yet: waits for the elke27 raw API pass-through "
-        "(decision 34). Only the fake-panel tests run today."
-    )
+    from elk_test_tools.elke27_transport import Elke27Transport
+
+    return Elke27Transport.from_env(os.environ)
 
 
 def main(argv: list[str] | None = None, transport: Transport | None = None) -> int:

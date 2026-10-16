@@ -46,6 +46,13 @@ class FakePanel:
     def observe_session(self, sn: str) -> str:
         return "dropped (fake panel)"
 
+    def authenticate(self, code: str) -> bool:
+        # Recorded without the code, like elke27's control_authenticate path.
+        self.frames.append({"authenticate": {}})
+        ok = code.isdigit() and int(code) == self.pin and self.installer_ok
+        self.authed = ok
+        return ok
+
     def request(self, payload):
         self.frames.append(copy.deepcopy(dict(payload)))
         if "authenticate" in payload:

@@ -231,8 +231,9 @@ def test_cli_never_has_pin_argument():
     assert not any(x in o for o in opts for x in ("pin", "code", "passph"))
 
 
-def test_live_transport_not_wired():
-    with pytest.raises(lr.AbortError, match="pass-through"):
+def test_live_transport_needs_own_link_file(monkeypatch):
+    monkeypatch.delenv("ELK_TEST_LINK_FILE", raising=False)
+    with pytest.raises(lr.AbortError, match="ELK_TEST_LINK_FILE"):
         lr.make_live_transport()
 
 
@@ -253,7 +254,14 @@ def test_child_logger_with_own_handler_is_redacted():
             child.debug("tx %s raw=%s", payload, str(payload))
             return orig(payload)
 
+        orig_auth = p.authenticate
+
+        def leaky_auth(code):
+            child.debug("authenticate pin=%s raw=%s", code, {"pin": int(code)})
+            return orig_auth(code)
+
         p.request = leaky
+        p.authenticate = leaky_auth
         go(p, apply=True)
     finally:
         child.removeHandler(h)
