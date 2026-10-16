@@ -78,6 +78,10 @@ class RedactingFilter(logging.Filter):
     def add_secret(self, value: str) -> None:
         if value:
             self._secrets.add(value)
+            # A numeric code may be logged in its integer form ("0123" -> "123").
+            stripped = value.lstrip("0")
+            if value.isdigit() and stripped and stripped != value:
+                self._secrets.add(stripped)
 
     def clear(self) -> None:
         self._secrets.clear()
@@ -99,6 +103,26 @@ class RedactingFilter(logging.Filter):
 REDACTOR = RedactingFilter()
 
 
+_FACTORY_INSTALLED = False
+
+
+def _install_record_factory() -> None:
+    """Redact every LogRecord at creation, so loggers created after the last
+    install_redaction() call (e.g. lazy elke27_lib children) cannot bypass it."""
+    global _FACTORY_INSTALLED
+    if _FACTORY_INSTALLED:
+        return
+    base = logging.getLogRecordFactory()
+
+    def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+        record = base(*args, **kwargs)
+        REDACTOR.filter(record)
+        return record
+
+    logging.setLogRecordFactory(factory)
+    _FACTORY_INSTALLED = True
+
+
 def install_redaction() -> None:
     """Attach the filter to every existing logger and handler, including children
     such as ``elke27_lib.transport`` with their own handlers (ancestor logger
@@ -107,6 +131,7 @@ def install_redaction() -> None:
         lg for lg in logging.Logger.manager.loggerDict.values() if isinstance(lg, logging.Logger)
     ]
     loggers += [logging.getLogger(n) for n in ("elk_test_tools", "elke27_lib")]
+    _install_record_factory()
     for lg in loggers:
         if REDACTOR not in lg.filters:
             lg.addFilter(REDACTOR)
@@ -234,7 +259,17 @@ def run(
         REDACTOR.clear()
 
 
-def _run_connected(t, targets, target_sns, apply, code, confirm, out, clock, result):
+def _run_connected(
+    t: Any,
+    targets: list[tuple[str, str]],
+    target_sns: set[str],
+    apply: bool,
+    code: str | None,
+    confirm: Callable[[str], str],
+    out: Callable[[str], None],
+    clock: Callable[[], float],
+    result: RunResult,
+) -> RunResult:
     mac = normalize_mac(t.panel_mac())
     if mac != TEST_PANEL_MAC:
         raise AbortError(f"panel MAC {mac or '?'} is not the TEST panel; refusing")
@@ -274,6 +309,10 @@ def _run_connected(t, targets, target_sns, apply, code, confirm, out, clock, res
     def authenticate() -> None:
         install_redaction()
         try:
+            # Digits only; the panel takes the pin as an integer. Leading zeros are
+            # dropped in the integer form, which add_secret() also redacts.
+            if code is None or not code.isdigit():
+                raise ValueError
             pin = int(code)
         except (TypeError, ValueError):
             raise AbortError(f"{ENV_INSTALLER_CODE} is not numeric") from None

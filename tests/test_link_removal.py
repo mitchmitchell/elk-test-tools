@@ -326,3 +326,14 @@ def test_partial_deletion_is_logged_on_abort(tmp_path, monkeypatch):
     )
     text = log.read_text()
     assert rc == 2 and f"sn={A} ok" in text and "ABORT" in text and SECRET not in text
+
+
+def test_late_logger_and_leading_zero_redacted(caplog):
+    lr.install_redaction()
+    lr.REDACTOR.add_secret("0123")
+    try:
+        with caplog.at_level(logging.DEBUG):
+            logging.getLogger("elke27_lib.created_late_xyz").debug("pin=%s raw=%s", 123, "0123")
+        assert caplog.messages and all("123" not in m for m in caplog.messages)
+    finally:
+        lr.REDACTOR.clear()

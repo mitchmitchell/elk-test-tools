@@ -7,9 +7,11 @@ name = "elk-test-tools"
 version = "0.1.0"
 requires-python = ">=3.12"
 license = {text = "MIT"}
+# Private tool: never publish. PyPI rejects this classifier on upload.
+classifiers = ["Private :: Do Not Upload"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
 
 [project.scripts]
 elk-remove-test-link = "elk_test_tools.link_removal:main"
@@ -27,3 +29,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
