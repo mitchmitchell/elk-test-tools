@@ -7,6 +7,7 @@ from typing import Any
 
 OWN_SN = "AABBCCDDEEFF"
 HA_SN = "2CCF67CA1AE0"
+BASELINE_SN = "119112725266"
 SECRET = "987654"
 
 
@@ -20,6 +21,7 @@ class FakePanel:
             2: {"sn": "0100" + OWN_SN, "name": "elk-test-tools"},
             3: {"sn": "0100246915998877", "name": "Old Link A"},
             4: {"sn": "0100727007405425", "name": "Old Link B"},
+            5: {"sn": "0100" + BASELINE_SN, "name": "HA TEST 0.2.0"},
         }
         self.areas = {1: "DISARMED", 2: "DISARMED"}
         self.frames: list[dict[str, Any]] = []

@@ -4,7 +4,10 @@ Safety properties (all enforced in code, none overridable):
 - Runs only when the connected panel MAC is TEST_PANEL_MAC.
 - Every target needs an exact 12-hex serial (--remove) AND the matching
   Network Devices name (--expect-name); any mismatch aborts the whole run.
-- 2CCF67CA1AE0 and the tool's own link are always protected.
+- Built-in protected links (DEFAULT_PROTECTED_SNS: TEST HA baseline link
+  119112725266 and the retired 2CCF67CA1AE0) and the tool's own link are always
+  protected. ELK_TEST_EXTRA_PROTECTED can only ADD serials; defaults can never
+  be removed.
 - There is no remove-all path; ``net_dev.default`` is never sent.
 - Dry-run by default; ``--apply`` plus typing the TEST MAC is required to delete.
 - The installer code comes only from ELK_TEST_INSTALLER_CODE, is read only on
@@ -28,7 +31,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 TEST_PANEL_MAC = "cc031eb03b20"
-HA_PROTECTED_SN = "2CCF67CA1AE0"
+# Built-in protections. Never shrink this at runtime; config can only add.
+BASELINE_PROTECTED_SN = "119112725266"  # TEST HA 0.2.0 baseline link (Oct 16 2026)
+HA_PROTECTED_SN = "2CCF67CA1AE0"  # retired baseline link, kept protected (harmless)
+DEFAULT_PROTECTED_SNS: frozenset[str] = frozenset({BASELINE_PROTECTED_SN, HA_PROTECTED_SN})
+ENV_EXTRA_PROTECTED = "ELK_TEST_EXTRA_PROTECTED"
 ENV_INSTALLER_CODE = "ELK_TEST_INSTALLER_CODE"
 MAX_TARGETS = 6
 REAUTH_AFTER_S = 50.0  # panel drops PIN auth after 60 s idle
@@ -189,7 +196,24 @@ def inventory(t: Transport) -> list[Slot]:
     return slots
 
 
-def validate_targets(removes: list[str], names: list[str]) -> list[tuple[str, str]]:
+def protected_serials(env: Mapping[str, str]) -> frozenset[str]:
+    """DEFAULT_PROTECTED_SNS plus any serials in ELK_TEST_EXTRA_PROTECTED
+    (comma/space separated, 12 hex each). Additive only: there is no way to drop
+    a default. A malformed entry aborts (fail closed)."""
+    extra: set[str] = set()
+    for raw in re.split(r"[,\s]+", env.get(ENV_EXTRA_PROTECTED, "").strip()):
+        if not raw:
+            continue
+        sn = raw.upper()
+        if not SN_RE.match(sn):
+            raise AbortError(f"{ENV_EXTRA_PROTECTED} has an invalid serial {raw!r}")
+        extra.add(sn)
+    return DEFAULT_PROTECTED_SNS | extra
+
+
+def validate_targets(
+    removes: list[str], names: list[str], protected: frozenset[str] = DEFAULT_PROTECTED_SNS
+) -> list[tuple[str, str]]:
     if not removes:
         raise AbortError("no --remove targets given")
     if len(removes) > MAX_TARGETS:
@@ -201,7 +225,7 @@ def validate_targets(removes: list[str], names: list[str]) -> list[tuple[str, st
         sn_u = sn.strip().upper()
         if not SN_RE.match(sn_u):
             raise AbortError(f"invalid serial {sn!r}: need exactly 12 hex chars")
-        if sn_u == HA_PROTECTED_SN:
+        if sn_u in protected | DEFAULT_PROTECTED_SNS:
             raise AbortError(f"{sn_u} is protected")
         if not name.strip():
             raise AbortError("--expect-name must be non-empty")
@@ -232,7 +256,8 @@ def run(
     clock: Callable[[], float] = time.monotonic,
 ) -> RunResult:
     install_redaction()
-    targets = validate_targets(removes, expect_names)
+    base_protected = protected_serials(env)
+    targets = validate_targets(removes, expect_names, base_protected)
     target_sns = {s for s, _ in targets}
     result = RunResult()
 
@@ -247,7 +272,16 @@ def run(
         transport.connect()
         try:
             return _run_connected(
-                transport, targets, target_sns, apply, code, confirm, out, clock, result
+                transport,
+                targets,
+                target_sns,
+                apply,
+                code,
+                confirm,
+                out,
+                clock,
+                result,
+                base_protected,
             )
         finally:
             transport.close()
@@ -269,6 +303,7 @@ def _run_connected(
     out: Callable[[str], None],
     clock: Callable[[], float],
     result: RunResult,
+    base_protected: frozenset[str] = DEFAULT_PROTECTED_SNS,
 ) -> RunResult:
     mac = normalize_mac(t.panel_mac())
     if mac != TEST_PANEL_MAC:
@@ -276,9 +311,9 @@ def _run_connected(
     own = str(t.own_link_sn()).upper()
     if not SN_RE.match(own):
         raise AbortError("cannot determine the tool's own link serial; refusing")
-    protected = {HA_PROTECTED_SN, own}
+    protected = set(base_protected | DEFAULT_PROTECTED_SNS) | {own}
     if target_sns & protected:
-        raise AbortError("a target is protected (2CCF67CA1AE0 or the tool's own link)")
+        raise AbortError("a target is protected (built-in/configured list or the tool's own link)")
 
     result.before = inventory(t)
     by_sn = {s.sn: s for s in result.before}
@@ -360,7 +395,9 @@ def _run_connected(
 
     after = {s.sn for s in result.after}
     left = target_sns & after
-    missing = protected - after
+    # Protected links must survive; ones already absent before (e.g. retired
+    # 2CCF67CA1AE0) are not required to appear.
+    missing = (protected & {s.sn for s in result.before}) - after
     result.applied = True
     out(_fmt(result.after, set(), protected))
     for sn, state in result.sessions.items():
