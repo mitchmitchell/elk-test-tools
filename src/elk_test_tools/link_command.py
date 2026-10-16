@@ -127,7 +127,7 @@ def run_link(
         client = client_factory()
         mac = normalize_mac(loop.run_until_complete(_discover_mac(client, host)))
         if mac != TEST_PANEL_MAC:
-            raise AbortError(f"panel MAC {mac or '?'} is not the TEST panel; refusing")
+            raise AbortError("panel is not the TEST panel")
         serial = serial_factory()
         # The new keys are not known until async_link returns, so no redaction
         # can catch them during linking: silence all logging for that call.

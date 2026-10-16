@@ -166,3 +166,17 @@ def test_failure_output_has_no_serial_keys_code_or_path(tmp_path, monkeypatch, c
     assert rc == 2 and captured.out == "" and captured.err.startswith("ABORT:")
     for secret in (SERIAL, ACCESS, PASSPH, KEYS.linkkey_hex, str(f)):
         assert secret not in captured.out + captured.err
+
+
+def test_mac_mismatch_never_prints_or_logs_other_mac(tmp_path, monkeypatch, capsys, caplog):
+    f = tmp_path / "tool-link.json"
+    for k, v in _env(f).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(lc, "VAULT_ROOT", tmp_path / "obsidian")
+    caplog.set_level(logging.DEBUG)
+    rc = lc.main(["--host", "10.0.0.9"], client_factory=lambda: FakeClient(mac="00:11:22:33:44:55"))
+    captured = capsys.readouterr()
+    assert rc == 2 and captured.err.strip() == "ABORT: panel is not the TEST panel"
+    text = (captured.out + captured.err + caplog.text).lower()
+    for form in ("001122334455", "00:11:22:33:44:55"):
+        assert form not in text

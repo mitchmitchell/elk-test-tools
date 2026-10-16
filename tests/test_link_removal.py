@@ -487,3 +487,17 @@ def test_protected_link_absent_before_does_not_fail_verify():
     del p.devices[5]  # --protect'ed baseline not on the panel
     res = go(p, apply=True)
     assert res.removed == [A]
+
+
+def test_wrong_mac_cli_never_prints_or_logs_other_mac(tmp_path, capsys, caplog):
+    caplog.set_level(logging.DEBUG)
+    log = tmp_path / "log.md"
+    p = FakePanel(mac="00:11:22:33:44:55")
+    rc = lr.main(
+        ["--remove", A, "--expect-name", "Old Link A", "--log-file", str(log)], transport=p
+    )
+    captured = capsys.readouterr()
+    assert rc != 0 and "panel is not the TEST panel" in captured.err
+    text = captured.out + captured.err + caplog.text + (log.read_text() if log.exists() else "")
+    for form in ("001122334455", "00:11:22:33:44:55"):
+        assert form not in text.lower()

@@ -362,7 +362,7 @@ def _run_connected(
 ) -> RunResult:
     mac = normalize_mac(t.panel_mac())
     if mac != TEST_PANEL_MAC:
-        raise AbortError(f"panel MAC {mac or '?'} is not the TEST panel; refusing")
+        raise AbortError("panel is not the TEST panel")
     own = str(t.own_link_sn()).upper()
     if not SN_RE.match(own):
         raise AbortError("cannot determine the tool's own link serial; refusing")
