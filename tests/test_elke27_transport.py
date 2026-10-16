@@ -35,8 +35,11 @@ def _t(client: FakeClient) -> et.Elke27Transport:
 
 
 def test_refuses_ha_link_and_bad_sn():
+    for sn in lr.DEFAULT_PROTECTED_SNS:
+        with pytest.raises(lr.AbortError, match="HA entry"):
+            et.Elke27Transport("h", 1, sn, KEYS)
     with pytest.raises(lr.AbortError, match="HA entry"):
-        et.Elke27Transport("h", 1, lr.HA_PROTECTED_SN, KEYS)
+        et.Elke27Transport("h", 1, "AABBCCDDEEFF", KEYS, frozenset({"AABBCCDDEEFF"}))
     with pytest.raises(lr.AbortError, match="12 hex"):
         et.Elke27Transport("h", 1, "nope", KEYS)
 
@@ -153,3 +156,10 @@ def test_authenticate_refuses_leading_zero_without_sending():
     c = FakeClient()
     assert _t(c).authenticate("0123") is False
     assert c.calls == []
+
+
+def test_from_env_uses_shared_extra_protected_list(tmp_path):
+    f = _link_file(tmp_path)
+    env = {et.ENV_LINK_FILE: str(f), lr.ENV_EXTRA_PROTECTED: "AABBCCDDEEFF"}
+    with pytest.raises(lr.AbortError, match="HA entry"):
+        et.Elke27Transport.from_env(env)

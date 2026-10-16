@@ -19,7 +19,13 @@ from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Any
 
-from elk_test_tools.link_removal import HA_PROTECTED_SN, REDACTOR, SN_RE, AbortError
+from elk_test_tools.link_removal import (
+    DEFAULT_PROTECTED_SNS,
+    REDACTOR,
+    SN_RE,
+    AbortError,
+    protected_serials,
+)
 
 ENV_LINK_FILE = "ELK_TEST_LINK_FILE"
 VAULT_ROOT = Path("/workspace/obsidian")
@@ -52,12 +58,23 @@ CONNECT_READY_TIMEOUT_S = 30.0
 class Elke27Transport:
     """Synchronous Transport adapter around an async Elke27Client."""
 
-    def __init__(self, host: str, port: int, own_link_sn: str, link_keys: Mapping[str, str]):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        own_link_sn: str,
+        link_keys: Mapping[str, str],
+        protected: frozenset[str] = DEFAULT_PROTECTED_SNS,
+    ):
         sn = own_link_sn.strip().upper()
         if not SN_RE.match(sn):
             raise AbortError("own_link_sn in the link file must be 12 hex chars")
-        if sn == HA_PROTECTED_SN:
-            raise AbortError("link file is the HA entry's link; the tool needs its own link")
+        # Shared list (built-ins + ELK_TEST_EXTRA_PROTECTED): a protected link is an
+        # HA entry's or baseline link, never the tool's own.
+        if sn in protected | DEFAULT_PROTECTED_SNS:
+            raise AbortError(
+                "link file is a protected (HA entry) link; the tool needs its own link"
+            )
         for value in link_keys.values():
             REDACTOR.add_secret(str(value))
         self._host, self._port, self._own_sn = host, int(port), sn
@@ -70,10 +87,13 @@ class Elke27Transport:
         path = env.get(ENV_LINK_FILE)
         if not path:
             raise AbortError(f"{ENV_LINK_FILE} is not set (the tool's own link file)")
+        protected = protected_serials(env)
         real = check_link_file(Path(path))
         try:
             data = json.loads(real.read_text(encoding="utf-8"))
-            return cls(data["host"], data["port"], data["own_link_sn"], data["link_keys"])
+            return cls(
+                data["host"], data["port"], data["own_link_sn"], data["link_keys"], protected
+            )
         except (OSError, ValueError, KeyError, TypeError):
             raise AbortError(f"cannot read the link file named by {ENV_LINK_FILE}") from None
 
