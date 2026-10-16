@@ -43,16 +43,22 @@ def check_link_file(path: Path, vault_root: Path = VAULT_ROOT) -> Path:
         raise AbortError("link file is not a regular file")
     if st.st_mode & 0o077:
         raise AbortError("link file must be mode 0600 (no group/other access)")
+    check_link_location(real, vault_root)
+    return real
+
+
+def check_link_location(real: Path, vault_root: Path = VAULT_ROOT) -> None:
+    """Refuse a (resolved) link file location under the vault or inside a git repo."""
     vault = vault_root.resolve()
     if real == vault or vault in real.parents:
         raise AbortError("link file must not be inside the vault")
     for parent in real.parents:
         if (parent / ".git").exists():
             raise AbortError("link file must not be inside a git repository")
-    return real
 
 
 CONNECT_READY_TIMEOUT_S = 30.0
+TOOL_MN = "222"  # same manufacturer number HA uses; the serial is the tool's own
 
 
 class Elke27Transport:
@@ -106,6 +112,8 @@ class Elke27Transport:
         from elke27_lib import Elke27Client, LinkKeys
 
         self._client = Elke27Client(enable_raw_passthrough=True)
+        # HELLO must present the identity this link was provisioned with.
+        self._client.set_client_identity({"mn": TOOL_MN, "sn": self._own_sn})
         keys = LinkKeys(
             tempkey_hex=self._keys["tempkey_hex"],
             linkkey_hex=self._keys["linkkey_hex"],

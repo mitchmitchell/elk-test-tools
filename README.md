@@ -52,3 +52,20 @@ JSON file named by `ELK_TEST_LINK_FILE` (`host`, `port`, `own_link_sn`,
 `link_keys`). The file must be mode 0600 and outside any git repo and the vault (the tool refuses otherwise, and never logs its path or contents). Never use the HA
 entry's link. Installer codes with a leading zero are refused (the panel pin is numeric). elke27 is pinned to the `feat/raw-passthrough` branch until it's
 released. Not yet run against any panel.
+
+## elk-link-test-tool (one-time, draft)
+
+Provisions the tool's **own** link on the TEST panel through elke27's
+`Elke27Client.async_link`, the same entry point HA's config flow uses:
+
+```
+ELK_TEST_LINK_FILE=~/private/elk-tool-link.json \
+ELK_TEST_ACCESS_CODE=... ELK_TEST_PASSPHRASE=... elk-link-test-tool --host <TEST panel IP>
+```
+
+- Aborts unless discovery reports panel MAC `cc031eb03b20`.
+- Registers a new random 12-digit decimal client serial (HA's scheme, never HA's ID), mn 222.
+- Creates the link file atomically (O_EXCL, mode 0600). It never overwrites an existing
+  file and refuses paths inside a git repo or under the vault.
+- Prints only the new serial. Codes, keys and the file path are never logged or printed;
+  all logging is silenced while linking.

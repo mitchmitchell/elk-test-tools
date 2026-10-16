@@ -17,6 +17,7 @@ dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
 
 [project.scripts]
 elk-remove-test-link = "elk_test_tools.link_removal:main"
+elk-link-test-tool = "elk_test_tools.link_command:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
