@@ -458,3 +458,10 @@ def test_protected_link_absent_before_does_not_fail_verify():
     del p.devices[5]  # --protect'ed baseline not on the panel
     res = go(p, apply=True)
     assert res.removed == [A]
+
+
+def test_own_link_missing_from_panel_refuses():
+    p = FakePanel()
+    p.devices.pop(2)  # the tool's own link
+    with pytest.raises(lr.AbortError, match="own link is not on this panel"):
+        go(p)

@@ -53,6 +53,7 @@ def check_link_file(path: Path, vault_root: Path = VAULT_ROOT) -> Path:
 
 
 CONNECT_READY_TIMEOUT_S = 30.0
+TOOL_MN = "222"  # same manufacturer number HA uses; the serial is the tool's own
 
 
 class Elke27Transport:
@@ -106,6 +107,11 @@ class Elke27Transport:
         from elke27_lib import Elke27Client, LinkKeys
 
         self._client = Elke27Client(enable_raw_passthrough=True)
+        # HELLO must present the identity this link was provisioned with. The
+        # panel looks the link up by this sn and encrypts the session key with that
+        # link's key, so HELLO only succeeds when own_link_sn and link_keys belong
+        # to the same link (a mistyped sn is refused or fails to decrypt).
+        self._client.set_client_identity({"mn": TOOL_MN, "sn": self._own_sn})
         keys = LinkKeys(
             tempkey_hex=self._keys["tempkey_hex"],
             linkkey_hex=self._keys["linkkey_hex"],
@@ -139,9 +145,14 @@ class Elke27Transport:
         return self._own_sn
 
     def area_arm_states(self) -> Mapping[int, str]:
+        """Arm state per area from the public snapshot (``AreaState.arm_mode``).
+
+        ``ArmMode.DISARMED`` reads as "DISARMED"; any other mode is its name; a
+        missing mode reads as "UNKNOWN", which the caller treats as not disarmed.
+        """
         return {
-            int(i): str(getattr(a, "arm_state", None) or getattr(a, "armed_state", None))
-            for i, a in self._client.areas.items()
+            int(i): _arm_mode_name(getattr(a, "arm_mode", None))
+            for i, a in self._client.snapshot.areas.items()
         }
 
     def observe_session(self, sn: str) -> str:
@@ -167,3 +178,10 @@ class Elke27Transport:
             verb = next(iter(payload[domain]))
             return {domain: {verb: {"error_code": code}}}
         raise AbortError(f"pass-through request failed ({name})")
+
+
+def _arm_mode_name(mode: Any) -> str:
+    if mode is None:
+        return "UNKNOWN"
+    value = getattr(mode, "value", mode)
+    return str(value).upper() if isinstance(value, str) and value else "UNKNOWN"

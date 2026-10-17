@@ -362,6 +362,10 @@ def _run_connected(
         raise AbortError("a target is protected (--protect or the tool's own link)")
 
     result.before = inventory(t)
+    # The session authenticated with the link file's keys under own_link_sn (HELLO
+    # binds them); also require that serial to be a link on this panel.
+    if own not in {s.sn for s in result.before}:
+        raise AbortError("the tool's own link is not on this panel; refusing")
     # Touch screens join the protected set (verify checks they survive too).
     protected |= {s.sn for s in result.before if s.touch_screen_reason}
     by_sn = {s.sn: s for s in result.before}
