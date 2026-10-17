@@ -465,3 +465,23 @@ def test_own_link_missing_from_panel_refuses():
     p.devices.pop(2)  # the tool's own link
     with pytest.raises(lr.AbortError, match="own link is not on this panel"):
         go(p)
+
+
+# --- own link serial never printed or logged (Architect should-fix, #2) ----------
+def test_own_link_serial_shown_as_label_in_table_and_log(tmp_path):
+    lines: list[str] = []
+    res = go(FakePanel(), out=lines.append)
+    text = "\n".join(lines)
+    assert OWN_SN not in text and "(own link)" in text
+    log_file = tmp_path / "log.md"
+    lr.append_log(log_file, lr.TEST_PANEL_MAC, res)
+    logged = log_file.read_text()
+    assert OWN_SN not in logged and "(own link)" in logged
+    assert A in logged  # other serials are still listed
+
+
+def test_own_link_serial_hidden_after_apply(tmp_path):
+    lines: list[str] = []
+    res = go(FakePanel(), apply=True, out=lines.append)
+    assert res.applied
+    assert OWN_SN not in "\n".join(lines)

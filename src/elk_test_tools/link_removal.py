@@ -183,6 +183,8 @@ class RunResult:
     removed: list[str] = field(default_factory=list)
     sessions: dict[str, str] = field(default_factory=dict)
     actions: list[str] = field(default_factory=list)
+    # The tool's own link serial; printed and logged only as "(own link)".
+    own_sn: str = ""
 
 
 def normalize_mac(mac: str) -> str:
@@ -274,7 +276,15 @@ def validate_targets(
     return out
 
 
-def _fmt(slots: list[Slot], targets: set[str], protected: set[str]) -> str:
+OWN_LINK_LABEL = "(own link)"
+
+
+def _show_sn(sn: str, own: str) -> str:
+    """The tool's own link serial is never printed or logged (as in link_command)."""
+    return OWN_LINK_LABEL if own and sn == own else sn
+
+
+def _fmt(slots: list[Slot], targets: set[str], protected: set[str], own: str = "") -> str:
     rows = ["slot  sn            action   name  [reason]"]
     for s in slots:
         reason = s.touch_screen_reason
@@ -284,7 +294,7 @@ def _fmt(slots: list[Slot], targets: set[str], protected: set[str]) -> str:
             act, why = "PROTECT", ""
         else:
             act, why = ("DELETE" if s.sn in targets else "keep"), ""
-        rows.append(f"{s.net_dev_id:<5} {s.sn}  {act:<8} {s.name}{why}")
+        rows.append(f"{s.net_dev_id:<5} {_show_sn(s.sn, own):<12}  {act:<8} {s.name}{why}")
     return "\n".join(rows)
 
 
@@ -357,6 +367,7 @@ def _run_connected(
     own = str(t.own_link_sn()).upper()
     if not SN_RE.match(own):
         raise AbortError("cannot determine the tool's own link serial; refusing")
+    result.own_sn = own
     protected = set(base_protected | DEFAULT_PROTECTED_SNS) | {own}
     if target_sns & protected:
         raise AbortError("a target is protected (--protect or the tool's own link)")
@@ -378,7 +389,7 @@ def _run_connected(
         if slot.touch_screen_reason:
             raise AbortError(f"{sn} is protected: {slot.touch_screen_reason}")
 
-    out(_fmt(result.before, target_sns, protected))
+    out(_fmt(result.before, target_sns, protected, own))
     if not apply:
         out("DRY RUN: nothing removed. Re-run with --apply to delete.")
         result.actions.append("dry-run")
@@ -454,12 +465,13 @@ def _run_connected(
     # required to appear.
     missing = (protected & {s.sn for s in result.before}) - after
     result.applied = True
-    out(_fmt(result.after, set(), protected))
+    out(_fmt(result.after, set(), protected, own))
     for sn, state in result.sessions.items():
         out(f"revoked link {sn}: session after delete = {state}")
     if left or missing:
         raise AbortError(
-            f"verify failed: still present={sorted(left)} protected missing={sorted(missing)}"
+            f"verify failed: still present={sorted(left)} "
+            f"protected missing={sorted(_show_sn(sn, own) for sn in missing)}"
         )
     out("OK: targets removed, protected links present.")
     return result
@@ -469,8 +481,8 @@ def append_log(path: Path, mac: str, res: RunResult) -> None:
     ts = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
     lines = [
         f"\n## {ts} panel {mac} ({'apply' if res.applied else 'dry-run'})",
-        f"- before: {', '.join(s.sn for s in res.before) or '-'}",
-        f"- after: {', '.join(s.sn for s in res.after) or '-'}",
+        f"- before: {', '.join(_show_sn(s.sn, res.own_sn) for s in res.before) or '-'}",
+        f"- after: {', '.join(_show_sn(s.sn, res.own_sn) for s in res.after) or '-'}",
         *(f"- {a}" for a in res.actions),
         *(f"- session {sn}: {st}" for sn, st in res.sessions.items()),
     ]

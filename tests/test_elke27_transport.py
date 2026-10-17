@@ -19,10 +19,16 @@ from elk_test_tools import link_removal as lr
 KEYS = {"tempkey_hex": "11" * 16, "linkkey_hex": "22" * 16, "linkhmac_hex": "33" * 32}
 
 
+AUTH_OK = {"error_code": 0, "installer": True, "session_id": 5}
+
+
 class FakeClient:
-    def __init__(self, error: Any = None, data: Any = None) -> None:
+    def __init__(
+        self, error: Any = None, data: Any = None, auth_ok: bool = True, auth_data: Any = AUTH_OK
+    ) -> None:
         self.calls: list[tuple[str, Any, dict[str, Any]]] = []
         self.error, self.data = error, data
+        self.auth_ok, self.auth_data = auth_ok, auth_data
 
     async def async_raw_request(self, message: Any, **kw: Any) -> Any:
         self.calls.append(("raw", message, kw))
@@ -30,7 +36,7 @@ class FakeClient:
 
     async def async_execute(self, key: str, **kw: Any) -> Any:
         self.calls.append((key, None, {"pin_type": type(kw.get("pin")).__name__}))
-        return SimpleNamespace(ok=True, data={}, error=None)
+        return SimpleNamespace(ok=self.auth_ok, data=self.auth_data, error=None)
 
 
 def _t(client: FakeClient) -> et.Elke27Transport:
@@ -253,3 +259,118 @@ def test_connect_presents_own_link_identity(monkeypatch):
     assert c.method_calls.index(
         next(m for m in c.method_calls if m[0] == "set_client_identity")
     ) < c.method_calls.index(next(m for m in c.method_calls if m[0] == "async_connect"))
+
+
+# --- installer flag (design step 6, Architect review 5558118610 blocker 2) -------
+@pytest.mark.parametrize(
+    ("auth_ok", "auth_data"),
+    [
+        (True, {"error_code": 0, "installer": False, "session_id": 5}),
+        (True, {"error_code": 0, "session_id": 5}),  # flag missing
+        (True, {"error_code": 0, "installer": "true"}),  # must be JSON true
+        (True, {"error_code": 0, "installer": 1}),
+        (True, None),
+        (False, AUTH_OK),
+    ],
+)
+def test_authenticate_requires_installer_true(auth_ok, auth_data):
+    c = FakeClient(auth_ok=auth_ok, auth_data=auth_data)
+    assert _t(c).authenticate("4123") is False
+    assert c.calls == [("control_authenticate", None, {"pin_type": "str"})]
+
+
+def test_installer_false_aborts_run_before_any_delete():
+    from tests.fake_panel import BASELINE_SN, SECRET, FakePanel
+
+    class _Panel(FakePanel):
+        def authenticate(self, code: str) -> bool:
+            self.frames.append({"authenticate": {}})
+            client = FakeClient(auth_data={"error_code": 0, "installer": False})
+            return _t(client).authenticate(code)
+
+    p = _Panel()
+    try:
+        with pytest.raises(lr.AbortError, match="installer authentication failed"):
+            lr.run(
+                transport=p,
+                removes=["246915998877"],
+                expect_names=["Old Link A"],
+                apply=True,
+                env={lr.ENV_INSTALLER_CODE: SECRET},
+                confirm=lambda _p: "cc031eb03b20",
+                protects=[BASELINE_SN],
+                out=lambda _s: None,
+            )
+    finally:
+        lr.REDACTOR.clear()
+    assert not any("del_attribs" in f.get("net_dev", {}) for f in p.frames)
+    assert len(p.devices) == 6
+
+
+# --- every tool message through a REAL Elke27Client (no autospec) ----------------
+# create_autospec checks names and signatures only, not async_raw_request's message
+# validation (it missed get_list/logout being refused). These use a real client
+# with no session: validation and the permission gate run, then the request stops
+# with NotAuthenticatedError before anything could be sent.
+
+
+def _tool_messages() -> list[dict[str, Any]]:
+    """Every raw message shape the removal tool sends, captured from a full run."""
+    from tests.fake_panel import BASELINE_SN, SECRET, FakePanel
+
+    p = FakePanel()
+    try:
+        lr.run(
+            transport=p,
+            removes=["246915998877"],
+            expect_names=["Old Link A"],
+            apply=True,
+            env={lr.ENV_INSTALLER_CODE: SECRET},
+            confirm=lambda _p: "cc031eb03b20",
+            protects=[BASELINE_SN],
+            out=lambda _s: None,
+        )
+    finally:
+        lr.REDACTOR.clear()
+    msgs = [f for f in p.frames if "authenticate" not in f]
+    verbs = {next(iter(m["net_dev"])) for m in msgs}
+    assert verbs == {"get_list", "get_attribs", "del_attribs", "logout"}, verbs
+    return msgs
+
+
+def _real_raw(message: Any) -> Any:
+    import asyncio
+
+    client = Elke27Client(enable_raw_passthrough=True)
+    return asyncio.run(client.async_raw_request(message, allow_installer=True))
+
+
+@pytest.mark.parametrize("message", _tool_messages(), ids=lambda m: next(iter(m["net_dev"])))
+def test_every_tool_message_passes_real_client_validation(message):
+    from elke27_lib.errors import Elke27InvalidArgument, Elke27PermissionError
+
+    result = _real_raw(message)
+    assert not result.ok  # no session, so nothing was sent
+    assert not isinstance(result.error, Elke27InvalidArgument), type(result.error).__name__
+    assert not isinstance(result.error, Elke27PermissionError), type(result.error).__name__
+    assert type(result.error).__name__ == "NotAuthenticatedError"
+
+
+def test_real_client_validation_is_live_negative_control():
+    """A non-JSON value is refused by the real client, so the test above can fail."""
+    from elke27_lib.errors import Elke27InvalidArgument
+
+    result = _real_raw({"net_dev": {"get_list": b"x"}})
+    assert isinstance(result.error, Elke27InvalidArgument)
+
+
+def test_transport_request_through_real_client_reaches_session_check():
+    t = et.Elke27Transport("10.0.0.5", 2101, "AABBCCDDEEFF", KEYS)
+    try:
+        t._client = Elke27Client(enable_raw_passthrough=True)
+        for message in _tool_messages():
+            with pytest.raises(lr.AbortError, match=r"\(NotAuthenticatedError\)"):
+                t.request(message)
+    finally:
+        t._loop.close()
+        lr.REDACTOR.clear()
