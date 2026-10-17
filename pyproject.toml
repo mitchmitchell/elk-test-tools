@@ -11,7 +11,7 @@ license = {text = "MIT"}
 classifiers = ["Private :: Do Not Upload"]
 # Pinned to an elke27 main commit (raw pass-through, decision 34/38) until a
 # release with it ships; then pin the release.
-dependencies = ["elke27 @ git+https://github.com/mitchmitchell/elke27@e2470d8f87d1f9ee62face6b1bea91e88e414ebf"]
+dependencies = ["elke27 @ git+https://github.com/mitchmitchell/elke27@2ea5105f058cc8245534835dda3dcd3f1d262c6b"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
