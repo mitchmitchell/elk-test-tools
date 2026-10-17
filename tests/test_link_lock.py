@@ -91,8 +91,15 @@ def test_lock_held_by_another_process_blocks(tmp_path):
         holder.wait()
 
 
-def test_remove_run_aborts_while_a_link_run_holds_the_lock(tmp_path, monkeypatch, capsys):
+def _existing_link_file(tmp_path):
     f = tmp_path / "tool-link.json"
+    f.write_text("{}")
+    f.chmod(0o600)
+    return f
+
+
+def test_remove_run_aborts_while_a_link_run_holds_the_lock(tmp_path, monkeypatch, capsys):
+    f = _existing_link_file(tmp_path)
     monkeypatch.setenv("ELK_TEST_LINK_FILE", str(f))
     p = FakePanel()
     with exclusive_link_lock(f):
@@ -103,7 +110,7 @@ def test_remove_run_aborts_while_a_link_run_holds_the_lock(tmp_path, monkeypatch
 
 
 def test_remove_run_holds_the_lock_against_a_link_run(tmp_path, monkeypatch):
-    f = tmp_path / "tool-link.json"
+    f = _existing_link_file(tmp_path)
     monkeypatch.setenv("ELK_TEST_LINK_FILE", str(f))
     seen: list[str] = []
 
@@ -118,3 +125,71 @@ def test_remove_run_holds_the_lock_against_a_link_run(tmp_path, monkeypatch):
 
     assert lr.main(["--remove", A, "--expect-name", "Old Link A"], transport=LockProbePanel()) == 0
     assert seen == ["held"]
+
+
+def test_lock_free_again_after_holder_is_sigkilled(tmp_path):
+    """flock is released by the kernel when the holder dies, even on SIGKILL."""
+    import signal
+
+    f = tmp_path / "tool-link.json"
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import fcntl,os,sys,time;"
+            "fd=os.open(sys.argv[1],os.O_RDWR|os.O_CREAT,0o600);"
+            "fcntl.flock(fd,fcntl.LOCK_EX);print('locked',flush=True);time.sleep(30)",
+            str(lock_path_for(f)),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline().strip() == "locked"
+        with pytest.raises(lr.AbortError, match="in progress"), exclusive_link_lock(f):
+            pass
+    finally:
+        holder.send_signal(signal.SIGKILL)
+        holder.wait()
+    with exclusive_link_lock(f):  # taken again at once
+        pass
+    client = FakeClient()
+    _run(tmp_path, client, _env(f), [])
+    assert len(client.link_calls) == 1
+
+
+@pytest.mark.parametrize("kind", ["missing", "vault", "git"])
+def test_bad_link_file_aborts_remove_without_creating_a_lock(tmp_path, monkeypatch, capsys, kind):
+    if kind == "missing":
+        f = tmp_path / "nope.json"
+    else:
+        d = tmp_path / ("repo" if kind == "git" else "obsidian")
+        (d / ".git").mkdir(parents=True) if kind == "git" else d.mkdir()
+        f = d / "tool-link.json"
+        f.write_text("{}")
+        f.chmod(0o600)
+        if kind == "vault":
+            import elk_test_tools.elke27_transport as et
+
+            monkeypatch.setattr(et, "VAULT_ROOT", d)
+    monkeypatch.setenv("ELK_TEST_LINK_FILE", str(f))
+    p = FakePanel()
+    rc = lr.main(["--remove", A, "--expect-name", "Old Link A"], transport=p)
+    err = capsys.readouterr().err
+    assert rc == 2 and str(tmp_path) not in err
+    assert not lock_path_for(f).exists()
+    assert p.frames == []
+
+
+def test_symlinked_link_file_takes_the_same_lock_as_the_real_file(tmp_path, monkeypatch, capsys):
+    f = _existing_link_file(tmp_path)
+    alias = tmp_path / "alias" / "link.json"
+    alias.parent.mkdir()
+    alias.symlink_to(f)
+    monkeypatch.setenv("ELK_TEST_LINK_FILE", str(alias))
+    p = FakePanel()
+    with exclusive_link_lock(f):  # lock next to the real file
+        rc = lr.main(["--remove", A, "--expect-name", "Old Link A"], transport=p)
+    assert rc == 2 and "in progress" in capsys.readouterr().err
+    assert not lock_path_for(alias).exists()
+    assert p.frames == []

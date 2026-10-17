@@ -561,10 +561,17 @@ def main(argv: list[str] | None = None, transport: Transport | None = None) -> i
 
 def _run_lock() -> AbstractContextManager[None]:
     """The link/remove lock next to ELK_TEST_LINK_FILE (shared with the link command)."""
+    from elk_test_tools import elke27_transport
     from elk_test_tools.link_lock import exclusive_link_lock
 
     link_file = os.environ.get("ELK_TEST_LINK_FILE")
-    return exclusive_link_lock(link_file) if link_file else nullcontext()
+    if not link_file:
+        return nullcontext()
+    # Validate and resolve before locking: a bad path must not create a stray
+    # .lock file (in the vault or a repo), and a symlinked path must take the same
+    # lock as elk-link-test-tool (which locks next to the real file).
+    real = elke27_transport.check_link_file(Path(link_file), elke27_transport.VAULT_ROOT)
+    return exclusive_link_lock(real)
 
 
 def _main_locked(args: argparse.Namespace, transport: Transport | None) -> int:

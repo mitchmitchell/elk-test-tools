@@ -22,8 +22,8 @@ Guardrails (hard-coded, not overridable):
   matching Network Devices name in `--expect-name`.
 - Connects over the tool's **own dedicated link**, never the TEST HA entry's link.
 - Protected list (decision 41) = the tool's own link (`own_link_sn`, always) + the link
-  file's optional `"protect"` array (12-hex serials; `elk-link-test-tool` writes
-  `"protect": []`, edit it to add e.g. the TEST HA entry's link) + optional
+  file's optional `"protect"` array (12-hex serials, set once with
+  `elk-link-test-tool --protect SERIAL`, e.g. the TEST HA entry's link) + optional
   `--protect SERIAL` (12 hex, repeatable) for a single run. No serials are built in.
   The tool runs fine with an empty list. A malformed `"protect"` array or link file
   aborts. A `--remove` of a protected serial aborts the whole run; only the exact
@@ -72,7 +72,9 @@ ELK_TEST_ACCESS_CODE=... ELK_TEST_PASSPHRASE=... elk-link-test-tool --host <TEST
 - One run at a time: `elk-link-test-tool` and `elk-remove-test-link` both hold an exclusive
   `flock` on `<link file>.lock` (next to the link file) for the whole run. A second run aborts
   before touching the panel, so concurrent runs can't orphan a link.
-- Creates the link file atomically (O_EXCL, mode 0600) with an empty `"protect": []` array. It never overwrites an existing
+- Creates the link file atomically (O_EXCL, mode 0600). Its `"protect"` array holds the
+  serials given with `--protect SERIAL` (12 hex, repeatable, validated before anything
+  else; empty if none). Don't hand-edit the file, since it holds the link keys. It never overwrites an existing
   file and refuses paths inside a git repo or under the vault.
 - Reports only success or failure. The serial, codes, keys and file path are never logged
   or printed (the serial is in the link file, and the tool auto-protects it). All logging

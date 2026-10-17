@@ -34,6 +34,7 @@ from elk_test_tools.link_removal import (
     AbortError,
     install_redaction,
     normalize_mac,
+    parse_serials,
 )
 
 ENV_ACCESS_CODE = "ELK_TEST_ACCESS_CODE"
@@ -41,8 +42,17 @@ ENV_PASSPHRASE = "ELK_TEST_PASSPHRASE"
 
 
 def generate_serial() -> str:
-    """Random 12-digit decimal, no leading zero (same scheme as HA's integration ID)."""
+    """Random 12-digit decimal, no leading zero (same scheme as HA's integration ID).
+
+    Distinctness from other links is probabilistic (9 * 10**11 values), not checked
+    against the panel: the tool has no session before linking. A serial that
+    collides with a --protect serial is drawn again, and the removal tool refuses
+    to run if its own link is a protected serial.
+    """
     return str(secrets.randbelow(9 * 10**11) + 10**11)
+
+
+MAX_SERIAL_DRAWS = 5
 
 
 def _prepare_path(raw: str | None, vault_root: Path) -> Path:
@@ -112,17 +122,21 @@ def run_link(
     out: Callable[[str], None] = print,
     vault_root: Path | None = None,
     serial_factory: Callable[[], str] | None = None,
+    protects: list[str] | None = None,
 ) -> str:
     install_redaction()
     vault_root = vault_root or VAULT_ROOT
     serial_factory = serial_factory or generate_serial
+    # Validated before anything else (no lock file, no panel contact); written into
+    # the link file's "protect" array at creation, so it never needs hand-editing.
+    protect = parse_serials(list(protects or []), "--protect")
     raw = env.get(ENV_LINK_FILE)
-    _prepare_path(raw, vault_root)  # validate before creating the lock file
-    assert raw is not None
+    target = _prepare_path(raw, vault_root)  # validate before creating the lock file
     # One run at a time (shared with elk-remove-test-link): the existence check,
     # provisioning and the exclusive write all happen under the lock, so a second
-    # run can't also provision a link and then fail to save its keys.
-    with exclusive_link_lock(raw):
+    # run can't also provision a link and then fail to save its keys. The lock sits
+    # next to the resolved path, the same one elk-remove-test-link locks.
+    with exclusive_link_lock(target):
         return _run_link_locked(
             target=_prepare_path(raw, vault_root),
             host=host,
@@ -131,6 +145,7 @@ def run_link(
             client_factory=client_factory,
             out=out,
             serial_factory=serial_factory,
+            protect=protect,
         )
 
 
@@ -143,6 +158,7 @@ def _run_link_locked(
     client_factory: Callable[[], Any],
     out: Callable[[str], None],
     serial_factory: Callable[[], str],
+    protect: frozenset[str] = frozenset(),
 ) -> str:
     access = env.pop(ENV_ACCESS_CODE, None)
     passph = env.pop(ENV_PASSPHRASE, None)
@@ -156,7 +172,7 @@ def _run_link_locked(
         mac = normalize_mac(loop.run_until_complete(_discover_mac(client, host)))
         if mac != TEST_PANEL_MAC:
             raise AbortError("panel is not the TEST panel")
-        serial = serial_factory()
+        serial = _draw_serial(serial_factory, protect)
         # The new keys are not known until async_link returns, so no redaction
         # can catch them during linking: silence all logging for that call.
         logging.disable(logging.CRITICAL)
@@ -168,7 +184,13 @@ def _run_link_locked(
             REDACTOR.add_secret(value)
         _write_exclusive(
             target,
-            {"host": host, "port": port, "own_link_sn": serial, "link_keys": keys, "protect": []},
+            {
+                "host": host,
+                "port": port,
+                "own_link_sn": serial,
+                "link_keys": keys,
+                "protect": sorted(protect),
+            },
         )
     finally:
         access = passph = None
@@ -178,6 +200,14 @@ def _run_link_locked(
     return serial
 
 
+def _draw_serial(serial_factory: Callable[[], str], protect: frozenset[str]) -> str:
+    for _ in range(MAX_SERIAL_DRAWS):
+        serial = serial_factory()
+        if serial.upper() not in protect:
+            return serial
+    raise AbortError("could not draw a serial distinct from the protected serials")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="elk-link-test-tool",
@@ -185,6 +215,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--host", required=True, help="TEST panel host")
     p.add_argument("--port", type=int, default=2101)
+    p.add_argument(
+        "--protect",
+        action="append",
+        default=[],
+        metavar="SERIAL",
+        help="12-hex serial to store in the link file's protect list (repeatable), "
+        "e.g. the TEST HA entry's link",
+    )
     return p
 
 
@@ -204,6 +242,7 @@ def main(argv: list[str] | None = None, client_factory: Callable[[], Any] | None
             port=args.port,
             env=os.environ,
             client_factory=client_factory or default_factory,
+            protects=args.protect,
         )
     except AbortError as exc:
         print(f"ABORT: {exc}", file=sys.stderr)

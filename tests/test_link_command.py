@@ -180,3 +180,82 @@ def test_mac_mismatch_never_prints_or_logs_other_mac(tmp_path, monkeypatch, caps
     text = (captured.out + captured.err + caplog.text).lower()
     for form in ("001122334455", "00:11:22:33:44:55"):
         assert form not in text
+
+
+# --- --protect at creation (Architect review 5558118767 blocker 1) ---------------
+HA_LINK = "119112725266"
+
+
+def _run_p(tmp_path: Any, client: Any, env: dict[str, str], out: list[str], protects, serial=None):
+    return lc.run_link(
+        host="10.0.0.9",
+        port=2101,
+        env=env,
+        client_factory=lambda: client,
+        out=out.append,
+        vault_root=tmp_path / "obsidian",
+        serial_factory=serial or (lambda: SERIAL),
+        protects=protects,
+    )
+
+
+def test_protect_serials_written_at_creation_and_never_logged(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG)
+    f = tmp_path / "tool-link.json"
+    out: list[str] = []
+    _run_p(tmp_path, FakeClient(), _env(f), out, [HA_LINK, "aabbccddeeff", HA_LINK])
+    assert stat.S_IMODE(f.stat().st_mode) == 0o600
+    assert json.loads(f.read_text())["protect"] == ["119112725266", "AABBCCDDEEFF"]
+    assert out == ["OK: link created"]
+    for secret in (HA_LINK, "AABBCCDDEEFF", str(f)):
+        assert secret not in caplog.text and secret not in "".join(out)
+
+
+@pytest.mark.parametrize("bad", ["12345", "ZZZZZZZZZZZZ", "", "1191127252661"])
+def test_bad_protect_aborts_before_lock_or_panel(tmp_path, bad):
+    from elk_test_tools.link_lock import lock_path_for
+
+    f = tmp_path / "tool-link.json"
+    client = FakeClient()
+    env = _env(f)
+    with pytest.raises(lr.AbortError, match="--protect") as ei:
+        _run_p(tmp_path, client, env, [], [HA_LINK, bad])
+    assert client.link_calls == [] and not f.exists()
+    assert not lock_path_for(f).exists()
+    assert bad not in str(ei.value) or not bad
+    assert lc.ENV_ACCESS_CODE in env  # codes not even read
+
+
+def test_protect_is_repeatable_on_the_cli(tmp_path, monkeypatch):
+    f = tmp_path / "tool-link.json"
+    monkeypatch.setattr(lc, "VAULT_ROOT", tmp_path / "obsidian")
+    for k, v in _env(f).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(lc, "generate_serial", lambda: SERIAL)
+    rc = lc.main(
+        ["--host", "10.0.0.9", "--protect", HA_LINK, "--protect", "AABBCCDDEEFF"],
+        client_factory=FakeClient,
+    )
+    assert rc == 0
+    assert json.loads(f.read_text())["protect"] == [HA_LINK, "AABBCCDDEEFF"]
+
+
+def test_serial_redrawn_if_it_collides_with_a_protected_serial(tmp_path):
+    f = tmp_path / "tool-link.json"
+    draws = iter([HA_LINK, SERIAL])
+    client = FakeClient()
+    assert _run_p(tmp_path, client, _env(f), [], [HA_LINK], serial=lambda: next(draws)) == SERIAL
+    assert client.link_calls[0]["client_identity"]["sn"] == SERIAL
+
+
+def test_real_client_async_link_accepts_the_arguments_used():
+    """Pin the link call to the real elke27 signature (not just a fake)."""
+    import inspect
+
+    from elke27_lib import Elke27Client
+
+    params = inspect.signature(Elke27Client.async_link).parameters
+    assert {"access_code", "passphrase", "client_identity"} <= set(params)
+    inspect.signature(Elke27Client.async_link).bind(
+        None, "10.0.0.9", 2101, access_code="1", passphrase="p", client_identity={}
+    )
