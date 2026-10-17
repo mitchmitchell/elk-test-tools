@@ -54,8 +54,8 @@ elke27's raw pass-through (`Elke27Client(enable_raw_passthrough=True)` and
 through elke27's `control_authenticate`. The tool's own link is read from the
 JSON file named by `ELK_TEST_LINK_FILE` (`host`, `port`, `own_link_sn`,
 `link_keys`). The file must be mode 0600 and outside any git repo and the vault (the tool refuses otherwise, and never logs its path or contents). Never use the HA
-entry's link. Installer codes with a leading zero are refused (the panel pin is numeric). elke27 is pinned to the `feat/raw-passthrough` branch until it's
-released. Not yet run against any panel.
+entry's link. Installer codes with a leading zero are refused (the panel pin is numeric). elke27 is pinned to main commit `e2470d8` (raw pass-through, elke27 #60) until a
+release includes it. Not yet run against any panel.
 
 ## elk-link-test-tool (one-time, draft)
 
