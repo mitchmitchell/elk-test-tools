@@ -180,7 +180,11 @@ class Elke27Transport:
         if not code.isdigit() or (len(code) > 1 and code.startswith("0")):
             return False  # link_removal rejects these first; elke27 would too
         result = self._run(self._client.async_execute("control_authenticate", pin=code))
-        return bool(result.ok)
+        if not result.ok:
+            return False
+        # Design step 6: the reply must grant installer level, not just succeed.
+        data = result.data
+        return isinstance(data, Mapping) and data.get("installer") is True
 
     def request(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         result = self._run(self._client.async_raw_request(payload, allow_installer=True))
