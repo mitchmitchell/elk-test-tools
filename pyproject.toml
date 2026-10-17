@@ -10,7 +10,7 @@ license = {text = "MIT"}
 # Private tool: never publish. PyPI rejects this classifier on upload.
 classifiers = ["Private :: Do Not Upload"]
 # Pinned to the pass-through branch until it is released (decision 34/38).
-dependencies = ["elke27 @ git+https://github.com/mitchmitchell/elke27@feat/raw-passthrough"]
+dependencies = ["elke27 @ git+https://github.com/mitchmitchell/elke27@e2470d8f87d1f9ee62face6b1bea91e88e414ebf"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
