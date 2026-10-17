@@ -27,6 +27,7 @@ from elk_test_tools.elke27_transport import (
     VAULT_ROOT,
     check_link_location,
 )
+from elk_test_tools.link_lock import exclusive_link_lock
 from elk_test_tools.link_removal import (
     REDACTOR,
     TEST_PANEL_MAC,
@@ -115,7 +116,34 @@ def run_link(
     install_redaction()
     vault_root = vault_root or VAULT_ROOT
     serial_factory = serial_factory or generate_serial
-    target = _prepare_path(env.get(ENV_LINK_FILE), vault_root)
+    raw = env.get(ENV_LINK_FILE)
+    _prepare_path(raw, vault_root)  # validate before creating the lock file
+    assert raw is not None
+    # One run at a time (shared with elk-remove-test-link): the existence check,
+    # provisioning and the exclusive write all happen under the lock, so a second
+    # run can't also provision a link and then fail to save its keys.
+    with exclusive_link_lock(raw):
+        return _run_link_locked(
+            target=_prepare_path(raw, vault_root),
+            host=host,
+            port=port,
+            env=env,
+            client_factory=client_factory,
+            out=out,
+            serial_factory=serial_factory,
+        )
+
+
+def _run_link_locked(
+    *,
+    target: Path,
+    host: str,
+    port: int,
+    env: MutableMapping[str, str],
+    client_factory: Callable[[], Any],
+    out: Callable[[str], None],
+    serial_factory: Callable[[], str],
+) -> str:
     access = env.pop(ENV_ACCESS_CODE, None)
     passph = env.pop(ENV_PASSPHRASE, None)
     if not access or not passph:

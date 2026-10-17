@@ -69,6 +69,9 @@ ELK_TEST_ACCESS_CODE=... ELK_TEST_PASSPHRASE=... elk-link-test-tool --host <TEST
 
 - Aborts unless discovery reports panel MAC `cc031eb03b20`.
 - Registers a new random 12-digit decimal client serial (HA's scheme, never HA's ID), mn 222.
+- One run at a time: `elk-link-test-tool` and `elk-remove-test-link` both hold an exclusive
+  `flock` on `<link file>.lock` (next to the link file) for the whole run. A second run aborts
+  before touching the panel, so concurrent runs can't orphan a link.
 - Creates the link file atomically (O_EXCL, mode 0600) with an empty `"protect": []` array. It never overwrites an existing
   file and refuses paths inside a git repo or under the vault.
 - Reports only success or failure. The serial, codes, keys and file path are never logged

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import dataclasses
+import inspect
 import json
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import create_autospec
 
 import pytest
+from elke27_lib import AreaState, ArmMode, Elke27Client, PanelSnapshot
+from elke27_lib.types import DiscoveredPanel
 
 from elk_test_tools import elke27_transport as et
 from elk_test_tools import link_removal as lr
@@ -204,3 +209,89 @@ def test_own_link_in_file_protect_refused(tmp_path):
     env = _write(tmp_path, {**BASE, "protect": ["AABBCCDDEEFF"]})
     with pytest.raises(lr.AbortError, match="HA entry"):
         et.Elke27Transport.from_env(env, [])
+
+
+# --- Contract tests against the REAL elke27 API (pinned commit) -------------------
+# The fake panel models the tool logic; these pin the adapter to elke27's actual
+# public surface, so a renamed method or field fails here instead of on a panel.
+
+
+def _real_client() -> Any:
+    """An autospec of the real Elke27Client: wrong names or arguments raise."""
+    return create_autospec(Elke27Client, instance=True)
+
+
+def test_real_client_has_every_method_the_adapter_uses():
+    for name in (
+        "async_discover",
+        "async_connect",
+        "async_disconnect",
+        "wait_ready",
+        "async_raw_request",
+        "async_execute",
+        "set_client_identity",
+    ):
+        assert callable(getattr(Elke27Client, name)), name
+    assert isinstance(inspect.getattr_static(Elke27Client, "snapshot"), property)
+    params = inspect.signature(Elke27Client.async_discover).parameters
+    assert {"address", "timeout_s"} <= set(params)
+    assert {"host", "panel_mac"} <= {f.name for f in dataclasses.fields(DiscoveredPanel)}
+    assert "arm_mode" in {f.name for f in dataclasses.fields(AreaState)}
+
+
+def test_panel_mac_uses_real_discover_api():
+    c = _real_client()
+    c.async_discover.return_value = [
+        DiscoveredPanel(host="10.0.0.9", port=2101, panel_mac="00:11:22:33:44:55"),
+        DiscoveredPanel(host="10.0.0.5", port=2101, panel_mac="cc:03:1e:b0:3b:20"),
+    ]
+    t = _t(c)
+    assert t.panel_mac() == "cc:03:1e:b0:3b:20"
+    c.async_discover.assert_awaited_once_with(address="10.0.0.5", timeout_s=5)
+
+
+def test_panel_mac_fails_closed_when_discovery_fails():
+    c = _real_client()
+    c.async_discover.side_effect = OSError("no route")
+    assert _t(c).panel_mac() == ""
+
+
+def _with_areas(**areas: AreaState) -> PanelSnapshot:
+    return dataclasses.replace(
+        PanelSnapshot.empty(), areas={int(k[1:]): v for k, v in areas.items()}
+    )
+
+
+def test_area_arm_states_read_real_arm_mode():
+    c = _real_client()
+    c.snapshot = _with_areas(
+        a1=AreaState(area_id=1, arm_mode=ArmMode.DISARMED),
+        a2=AreaState(area_id=2, arm_mode=ArmMode.ARMED_AWAY),
+        a3=AreaState(area_id=3, arm_mode=None),
+    )
+    assert _t(c).area_arm_states() == {1: "DISARMED", 2: "ARMED_AWAY", 3: "UNKNOWN"}
+
+
+def test_all_disarmed_real_areas_pass_the_disarm_gate():
+    c = _real_client()
+    c.snapshot = _with_areas(
+        a1=AreaState(area_id=1, arm_mode=ArmMode.DISARMED),
+        a2=AreaState(area_id=2, arm_mode=ArmMode.DISARMED),
+    )
+    states = _t(c).area_arm_states()
+    assert all(s == "DISARMED" for s in states.values())
+
+
+def test_connect_presents_own_link_identity(monkeypatch):
+    c = _real_client()
+    c.wait_ready.return_value = True
+    monkeypatch.setattr("elke27_lib.Elke27Client", lambda **_kw: c)
+    t = et.Elke27Transport("10.0.0.5", 2101, "AABBCCDDEEFF", KEYS)
+    try:
+        t.connect()
+    finally:
+        lr.REDACTOR.clear()
+    c.set_client_identity.assert_called_once_with({"mn": "222", "sn": "AABBCCDDEEFF"})
+    assert c.method_calls.index(
+        next(m for m in c.method_calls if m[0] == "set_client_identity")
+    ) < c.method_calls.index(next(m for m in c.method_calls if m[0] == "async_connect"))

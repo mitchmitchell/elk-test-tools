@@ -28,6 +28,7 @@ import re
 import sys
 import time
 from collections.abc import Callable, Mapping, MutableMapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -371,6 +372,10 @@ def _run_connected(
         raise AbortError("a target is protected (--protect or the tool's own link)")
 
     result.before = inventory(t)
+    # The session authenticated with the link file's keys under own_link_sn (HELLO
+    # binds them); also require that serial to be a link on this panel.
+    if own not in {s.sn for s in result.before}:
+        raise AbortError("the tool's own link is not on this panel; refusing")
     # Touch screens join the protected set (verify checks they survive too).
     protected |= {s.sn for s in result.before if s.touch_screen_reason}
     by_sn = {s.sn: s for s in result.before}
@@ -534,6 +539,23 @@ def main(argv: list[str] | None = None, transport: Transport | None = None) -> i
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     install_redaction()
+    try:
+        with _run_lock():
+            return _main_locked(args, transport)
+    except AbortError as exc:
+        print(f"ABORT: {exc}", file=sys.stderr)
+        return 2
+
+
+def _run_lock() -> AbstractContextManager[None]:
+    """The link/remove lock next to ELK_TEST_LINK_FILE (shared with the link command)."""
+    from elk_test_tools.link_lock import exclusive_link_lock
+
+    link_file = os.environ.get("ELK_TEST_LINK_FILE")
+    return exclusive_link_lock(link_file) if link_file else nullcontext()
+
+
+def _main_locked(args: argparse.Namespace, transport: Transport | None) -> int:
     try:
         t = transport or make_live_transport(args.protect)
         res = run(

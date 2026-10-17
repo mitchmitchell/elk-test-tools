@@ -501,3 +501,10 @@ def test_wrong_mac_cli_never_prints_or_logs_other_mac(tmp_path, capsys, caplog):
     text = captured.out + captured.err + caplog.text + (log.read_text() if log.exists() else "")
     for form in ("001122334455", "00:11:22:33:44:55"):
         assert form not in text.lower()
+
+
+def test_own_link_missing_from_panel_refuses():
+    p = FakePanel()
+    p.devices.pop(2)  # the tool's own link
+    with pytest.raises(lr.AbortError, match="own link is not on this panel"):
+        go(p)
