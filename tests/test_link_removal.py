@@ -239,9 +239,10 @@ def test_cli_never_has_pin_argument():
     assert not any(x in o for o in opts for x in ("pin", "code", "passph"))
 
 
-def test_live_transport_not_wired():
-    with pytest.raises(lr.AbortError, match="pass-through"):
-        lr.make_live_transport()
+def test_live_transport_needs_own_link_file(monkeypatch):
+    monkeypatch.delenv("ELK_TEST_LINK_FILE", raising=False)
+    with pytest.raises(lr.AbortError, match="ELK_TEST_LINK_FILE"):
+        lr.make_live_transport([BASELINE_SN])
 
 
 def test_child_logger_with_own_handler_is_redacted():
@@ -261,7 +262,14 @@ def test_child_logger_with_own_handler_is_redacted():
             child.debug("tx %s raw=%s", payload, str(payload))
             return orig(payload)
 
+        orig_auth = p.authenticate
+
+        def leaky_auth(code):
+            child.debug("authenticate pin=%s raw=%s", code, {"pin": int(code)})
+            return orig_auth(code)
+
         p.request = leaky
+        p.authenticate = leaky_auth
         go(p, apply=True)
     finally:
         child.removeHandler(h)
@@ -349,6 +357,22 @@ def test_late_logger_and_leading_zero_redacted(caplog):
         lr.REDACTOR.clear()
 
 
+def test_leading_zero_code_refused_before_authenticate():
+    p = FakePanel()
+    with pytest.raises(lr.AbortError, match="leading zero") as ei:
+        go(p, apply=True, env={lr.ENV_INSTALLER_CODE: "0123"})
+    assert "0123" not in str(ei.value)
+    assert "authenticate" not in kinds(p) and len(p.devices) == 6
+
+
+def test_armed_area_refused_before_authenticate():
+    p = FakePanel()
+    p.areas[2] = "ARMED_AWAY"
+    with pytest.raises(lr.AbortError, match="DISARMED"):
+        go(p, apply=True)
+    assert "authenticate" not in kinds(p) and len(p.devices) == 6
+
+
 # --- --protect (Mitch, Oct 16 2026 4:53 PM CT: --protect only, no built-ins) ----
 def test_no_built_in_serials():
     assert lr.DEFAULT_PROTECTED_SNS == frozenset()
@@ -434,3 +458,30 @@ def test_protected_link_absent_before_does_not_fail_verify():
     del p.devices[5]  # --protect'ed baseline not on the panel
     res = go(p, apply=True)
     assert res.removed == [A]
+
+
+def test_own_link_missing_from_panel_refuses():
+    p = FakePanel()
+    p.devices.pop(2)  # the tool's own link
+    with pytest.raises(lr.AbortError, match="own link is not on this panel"):
+        go(p)
+
+
+# --- own link serial never printed or logged (Architect should-fix, #2) ----------
+def test_own_link_serial_shown_as_label_in_table_and_log(tmp_path):
+    lines: list[str] = []
+    res = go(FakePanel(), out=lines.append)
+    text = "\n".join(lines)
+    assert OWN_SN not in text and "(own link)" in text
+    log_file = tmp_path / "log.md"
+    lr.append_log(log_file, lr.TEST_PANEL_MAC, res)
+    logged = log_file.read_text()
+    assert OWN_SN not in logged and "(own link)" in logged
+    assert A in logged  # other serials are still listed
+
+
+def test_own_link_serial_hidden_after_apply(tmp_path):
+    lines: list[str] = []
+    res = go(FakePanel(), apply=True, out=lines.append)
+    assert res.applied
+    assert OWN_SN not in "\n".join(lines)

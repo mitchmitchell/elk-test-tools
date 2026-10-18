@@ -41,3 +41,14 @@ Guardrails (hard-coded, not overridable):
 pass-through (decision 34); until then only the fake-panel tests run.
 
 Dev: `pip install -e ".[dev]" && ruff check . && pytest`
+
+## Live transport (draft, decision 34/38)
+
+`elk_test_tools.elke27_transport.Elke27Transport` sends every message through
+elke27's raw pass-through (`Elke27Client(enable_raw_passthrough=True)` and
+`async_raw_request(..., allow_installer=True)`). The installer code goes only
+through elke27's `control_authenticate`. The tool's own link is read from the
+JSON file named by `ELK_TEST_LINK_FILE` (`host`, `port`, `own_link_sn`,
+`link_keys`). The file must be mode 0600 and outside any git repo and the vault (the tool refuses otherwise, and never logs its path or contents). Never use the HA
+entry's link. Installer codes with a leading zero are refused (the panel pin is numeric). elke27 is pinned to main commit `2ea5105` (raw pass-through, elke27 #60 and #63) until a
+release includes it. Not yet run against any panel.
