@@ -171,7 +171,49 @@ def test_from_env_uses_shared_extra_protected_list(tmp_path):
     env = {et.ENV_LINK_FILE: str(f)}
     with pytest.raises(lr.AbortError, match="HA entry"):
         et.Elke27Transport.from_env(env, ["119112725266", "AABBCCDDEEFF"])
-    with pytest.raises(lr.AbortError, match="--protect"):
+    assert et.Elke27Transport.from_env(env, []).file_protected() == frozenset()
+
+
+def _write(tmp_path, data):
+    f = tmp_path / "link.json"
+    f.write_text(json.dumps(data))
+    f.chmod(0o600)
+    return {et.ENV_LINK_FILE: str(f)}
+
+
+BASE = {"host": "h", "port": 1, "own_link_sn": "AABBCCDDEEFF", "link_keys": KEYS}
+
+
+def test_link_file_protect_array_loaded(tmp_path):
+    env = _write(tmp_path, {**BASE, "protect": ["119112725266", "abcdef012345"]})
+    t = et.Elke27Transport.from_env(env, [])
+    assert t.file_protected() == {"119112725266", "ABCDEF012345"}
+    lr.REDACTOR.clear()
+
+
+def test_link_file_without_protect_array_ok(tmp_path):
+    t = et.Elke27Transport.from_env(_write(tmp_path, BASE), [])
+    assert t.file_protected() == frozenset()
+    lr.REDACTOR.clear()
+
+
+@pytest.mark.parametrize("bad", ["119112725266", ["xyz"], [119112725266], {"a": 1}, [None]])
+def test_malformed_protect_array_rejected(tmp_path, bad):
+    with pytest.raises(lr.AbortError, match="protect"):
+        et.Elke27Transport.from_env(_write(tmp_path, {**BASE, "protect": bad}), [])
+
+
+def test_malformed_link_file_rejected(tmp_path):
+    f = tmp_path / "link.json"
+    f.write_text("[1, 2]")
+    f.chmod(0o600)
+    with pytest.raises(lr.AbortError, match="cannot read"):
+        et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(f)}, [])
+
+
+def test_own_link_in_file_protect_refused(tmp_path):
+    env = _write(tmp_path, {**BASE, "protect": ["AABBCCDDEEFF"]})
+    with pytest.raises(lr.AbortError, match="HA entry"):
         et.Elke27Transport.from_env(env, [])
 
 

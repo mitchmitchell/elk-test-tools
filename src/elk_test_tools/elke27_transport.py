@@ -24,6 +24,7 @@ from elk_test_tools.link_removal import (
     REDACTOR,
     SN_RE,
     AbortError,
+    parse_serials,
     protected_serials,
 )
 
@@ -43,13 +44,18 @@ def check_link_file(path: Path, vault_root: Path = VAULT_ROOT) -> Path:
         raise AbortError("link file is not a regular file")
     if st.st_mode & 0o077:
         raise AbortError("link file must be mode 0600 (no group/other access)")
+    check_link_location(real, vault_root)
+    return real
+
+
+def check_link_location(real: Path, vault_root: Path = VAULT_ROOT) -> None:
+    """Refuse a (resolved) link file location under the vault or inside a git repo."""
     vault = vault_root.resolve()
     if real == vault or vault in real.parents:
         raise AbortError("link file must not be inside the vault")
     for parent in real.parents:
         if (parent / ".git").exists():
             raise AbortError("link file must not be inside a git repository")
-    return real
 
 
 CONNECT_READY_TIMEOUT_S = 30.0
@@ -66,13 +72,15 @@ class Elke27Transport:
         own_link_sn: str,
         link_keys: Mapping[str, str],
         protected: frozenset[str] = DEFAULT_PROTECTED_SNS,
+        file_protect: Any = (),
     ):
         sn = own_link_sn.strip().upper()
         if not SN_RE.match(sn):
             raise AbortError("own_link_sn in the link file must be 12 hex chars")
-        # Shared list (built-ins + ELK_TEST_EXTRA_PROTECTED): a protected link is an
-        # HA entry's or baseline link, never the tool's own.
-        if sn in protected | DEFAULT_PROTECTED_SNS:
+        self._file_protected = parse_serials(file_protect, 'link file "protect"')
+        # Shared list (file "protect" + --protect): a protected link is an HA
+        # entry's or baseline link, never the tool's own.
+        if sn in protected | self._file_protected | DEFAULT_PROTECTED_SNS:
             raise AbortError(
                 "link file is a protected (HA entry) link; the tool needs its own link"
             )
@@ -93,10 +101,17 @@ class Elke27Transport:
         real = check_link_file(Path(path))
         try:
             data = json.loads(real.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError
             return cls(
-                data["host"], data["port"], data["own_link_sn"], data["link_keys"], protected
+                data["host"],
+                data["port"],
+                data["own_link_sn"],
+                data["link_keys"],
+                protected,
+                data.get("protect", []),
             )
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             raise AbortError(f"cannot read the link file named by {ENV_LINK_FILE}") from None
 
     def _run(self, coro: Any) -> Any:
@@ -143,6 +158,9 @@ class Elke27Transport:
 
     def own_link_sn(self) -> str:
         return self._own_sn
+
+    def file_protected(self) -> frozenset[str]:
+        return self._file_protected
 
     def area_arm_states(self) -> Mapping[int, str]:
         """Arm state per area from the public snapshot (``AreaState.arm_mode``).
