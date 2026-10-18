@@ -1,8 +1,8 @@
 """JSON Schemas for the envelope and for each implemented command's ``data`` (§2, §4.1).
 
 CI validates every command's output against these, so schema drift breaks CI.
-The envelope schema is also checked in as ``schemas/envelope.schema.json``
-(§11 item 5) so Tester can validate outside the tool.
+The bundle of all of them is checked in as ``schemas/elk-verify.v1.json``
+(§11 item 5, acceptance E5) so Tester can validate outside the tool.
 """
 
 from __future__ import annotations
@@ -132,18 +132,79 @@ def data_schemas() -> dict[str, dict[str, Any]]:
         "schema": _data(
             "elk-verify schema data",
             {
-                "name": {"type": "string"},
+                "name": {"type": "string", "minLength": 1},
                 "schema": {"type": "object"},
             },
         ),
     }
 
 
+# Stable check ids per command (§4.1, acceptance E4). Ids are listed only here
+# and in `elk-verify schema`; renaming one is a schema-version change.
+CHECK_IDS: dict[str, tuple[str, ...]] = {
+    "version": ("tool.elke27.version", "tool.version.read"),
+    "schema": ("schema.document.built",),
+}
+
+BUNDLE_ID = f"elk-verify.v{SCHEMA_VERSION}"
+
+
+def _without_dialect(schema: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in schema.items() if k not in ("$schema", "$id")}
+
+
+def command_schema(command: str) -> dict[str, Any] | None:
+    """The full envelope schema for one command: its ids and its ``data``."""
+    data = data_schemas().get(command)
+    if data is None:
+        return None
+    env = envelope_schema()
+    props = dict(env["properties"])
+    props["command"] = {"const": command}
+    check = dict(_CHECK)
+    check["properties"] = dict(_CHECK["properties"]) | {"id": {"enum": list(CHECK_IDS[command])}}
+    props["checks"] = {"type": "array", "items": check}
+    props["data"] = _without_dialect(data)
+    env["properties"] = props
+    env["$id"] = f"elk-verify/{command}/v{SCHEMA_VERSION}"
+    env["title"] = f"elk-verify {command} envelope"
+    return env
+
+
+def _aborted_schema() -> dict[str, Any]:
+    """Any run refused before its command ran (usage, secret on argv, internal)."""
+    env = envelope_schema()
+    props = dict(env["properties"])
+    props["result"] = {"const": "abort"}
+    props["checks"] = {"type": "array", "maxItems": 0}
+    props["data"] = {"type": "object", "maxProperties": 0}
+    props["errors"] = {"type": "array", "items": _ERROR, "minItems": 1}
+    env["properties"] = props
+    return _without_dialect(env)
+
+
+def bundle_schema() -> dict[str, Any]:
+    """Every envelope the tool can print. Checked in as schemas/elk-verify.v1.json."""
+    defs: dict[str, Any] = {"aborted": _aborted_schema()}
+    for command in sorted(data_schemas()):
+        cmd = command_schema(command)
+        assert cmd is not None
+        defs[f"command.{command}"] = _without_dialect(cmd)
+    return {
+        "$schema": DIALECT,
+        "$id": BUNDLE_ID,
+        "title": "elk-verify output (all commands)",
+        "$defs": defs,
+        "anyOf": [{"$ref": f"#/$defs/{name}"} for name in defs],
+    }
+
+
 def schema_names() -> list[str]:
-    return ["envelope", *sorted(data_schemas())]
+    return sorted(data_schemas())
 
 
-def get_schema(name: str) -> dict[str, Any] | None:
-    if name == "envelope":
-        return envelope_schema()
-    return data_schemas().get(name)
+def get_schema(name: str | None) -> dict[str, Any] | None:
+    """No name: the bundle. A command name: that command's envelope schema."""
+    if name is None:
+        return bundle_schema()
+    return command_schema(name)

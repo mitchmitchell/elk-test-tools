@@ -1,0 +1,674 @@
+{
+  "$defs": {
+    "aborted": {
+      "additionalProperties": false,
+      "properties": {
+        "argv_redacted": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "checks": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "cleanup": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "data": {
+          "maxProperties": 0,
+          "type": "object"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "duration_s": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "errors": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "check_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "code": {
+                "enum": [
+                  "E_USAGE",
+                  "E_SECRET_ARG",
+                  "E_HA_NOT_ALLOWED",
+                  "E_PANEL_NOT_TEST",
+                  "E_PANEL_NAME",
+                  "E_LINK_IS_HA_ENTRY",
+                  "E_LINK_FILE",
+                  "E_TOKEN_MISSING",
+                  "E_TOKEN_REJECTED",
+                  "E_CODE_MISSING",
+                  "E_CODE_INVALID",
+                  "E_UNREACHABLE",
+                  "E_TIMEOUT",
+                  "E_SESSION_CONTENDED",
+                  "E_NOT_DRY_RUN_SAFE",
+                  "E_INTERNAL"
+                ]
+              },
+              "hint": {
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "severity": {
+                "enum": [
+                  "abort",
+                  "fail",
+                  "error"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "severity",
+              "message",
+              "hint",
+              "check_id"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "finished_at": {
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$",
+          "type": "string"
+        },
+        "planned": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "result": {
+          "const": "abort"
+        },
+        "schema_version": {
+          "const": "1"
+        },
+        "started_at": {
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "ha_url": {
+              "type": "string"
+            },
+            "hacs_ref": {
+              "type": "string"
+            },
+            "link": {
+              "const": "own"
+            },
+            "panel_mac": {
+              "pattern": "^[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "panel_name_ok": {
+              "type": "boolean"
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "tool": {
+          "additionalProperties": false,
+          "properties": {
+            "elke27_version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "const": "elk-verify"
+            },
+            "version": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "version",
+            "elke27_version"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "tool",
+        "command",
+        "argv_redacted",
+        "target",
+        "dry_run",
+        "result",
+        "started_at",
+        "finished_at",
+        "duration_s",
+        "checks",
+        "data",
+        "planned",
+        "errors",
+        "cleanup"
+      ],
+      "title": "elk-verify run envelope",
+      "type": "object"
+    },
+    "command.schema": {
+      "additionalProperties": false,
+      "properties": {
+        "argv_redacted": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "checks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "type": "string"
+              },
+              "duration_s": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "evidence": {
+                "type": "object"
+              },
+              "id": {
+                "enum": [
+                  "schema.document.built"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "skip",
+                  "error"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "detail",
+              "evidence",
+              "duration_s"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "cleanup": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command": {
+          "const": "schema"
+        },
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "name",
+            "schema"
+          ],
+          "title": "elk-verify schema data",
+          "type": "object"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "duration_s": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "errors": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "check_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "code": {
+                "enum": [
+                  "E_USAGE",
+                  "E_SECRET_ARG",
+                  "E_HA_NOT_ALLOWED",
+                  "E_PANEL_NOT_TEST",
+                  "E_PANEL_NAME",
+                  "E_LINK_IS_HA_ENTRY",
+                  "E_LINK_FILE",
+                  "E_TOKEN_MISSING",
+                  "E_TOKEN_REJECTED",
+                  "E_CODE_MISSING",
+                  "E_CODE_INVALID",
+                  "E_UNREACHABLE",
+                  "E_TIMEOUT",
+                  "E_SESSION_CONTENDED",
+                  "E_NOT_DRY_RUN_SAFE",
+                  "E_INTERNAL"
+                ]
+              },
+              "hint": {
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "severity": {
+                "enum": [
+                  "abort",
+                  "fail",
+                  "error"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "severity",
+              "message",
+              "hint",
+              "check_id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "finished_at": {
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$",
+          "type": "string"
+        },
+        "planned": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "result": {
+          "enum": [
+            "pass",
+            "fail",
+            "error",
+            "abort"
+          ]
+        },
+        "schema_version": {
+          "const": "1"
+        },
+        "started_at": {
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "ha_url": {
+              "type": "string"
+            },
+            "hacs_ref": {
+              "type": "string"
+            },
+            "link": {
+              "const": "own"
+            },
+            "panel_mac": {
+              "pattern": "^[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "panel_name_ok": {
+              "type": "boolean"
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "tool": {
+          "additionalProperties": false,
+          "properties": {
+            "elke27_version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "const": "elk-verify"
+            },
+            "version": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "version",
+            "elke27_version"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "tool",
+        "command",
+        "argv_redacted",
+        "target",
+        "dry_run",
+        "result",
+        "started_at",
+        "finished_at",
+        "duration_s",
+        "checks",
+        "data",
+        "planned",
+        "errors",
+        "cleanup"
+      ],
+      "title": "elk-verify schema envelope",
+      "type": "object"
+    },
+    "command.version": {
+      "additionalProperties": false,
+      "properties": {
+        "argv_redacted": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "checks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "type": "string"
+              },
+              "duration_s": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "evidence": {
+                "type": "object"
+              },
+              "id": {
+                "enum": [
+                  "tool.elke27.version",
+                  "tool.version.read"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "skip",
+                  "error"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "detail",
+              "evidence",
+              "duration_s"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "cleanup": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command": {
+          "const": "version"
+        },
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "elke27_version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "schema_version": {
+              "const": "1"
+            },
+            "tool_version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "elke27_version",
+            "schema_version",
+            "tool_version"
+          ],
+          "title": "elk-verify version data",
+          "type": "object"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "duration_s": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "errors": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "check_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "code": {
+                "enum": [
+                  "E_USAGE",
+                  "E_SECRET_ARG",
+                  "E_HA_NOT_ALLOWED",
+                  "E_PANEL_NOT_TEST",
+                  "E_PANEL_NAME",
+                  "E_LINK_IS_HA_ENTRY",
+                  "E_LINK_FILE",
+                  "E_TOKEN_MISSING",
+                  "E_TOKEN_REJECTED",
+                  "E_CODE_MISSING",
+                  "E_CODE_INVALID",
+                  "E_UNREACHABLE",
+                  "E_TIMEOUT",
+                  "E_SESSION_CONTENDED",
+                  "E_NOT_DRY_RUN_SAFE",
+                  "E_INTERNAL"
+                ]
+              },
+              "hint": {
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "severity": {
+                "enum": [
+                  "abort",
+                  "fail",
+                  "error"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "severity",
+              "message",
+              "hint",
+              "check_id"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "finished_at": {
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$",
+          "type": "string"
+        },
+        "planned": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "result": {
+          "enum": [
+            "pass",
+            "fail",
+            "error",
+            "abort"
+          ]
+        },
+        "schema_version": {
+          "const": "1"
+        },
+        "started_at": {
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$",
+          "type": "string"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "ha_url": {
+              "type": "string"
+            },
+            "hacs_ref": {
+              "type": "string"
+            },
+            "link": {
+              "const": "own"
+            },
+            "panel_mac": {
+              "pattern": "^[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "panel_name_ok": {
+              "type": "boolean"
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "tool": {
+          "additionalProperties": false,
+          "properties": {
+            "elke27_version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "const": "elk-verify"
+            },
+            "version": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "version",
+            "elke27_version"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "tool",
+        "command",
+        "argv_redacted",
+        "target",
+        "dry_run",
+        "result",
+        "started_at",
+        "finished_at",
+        "duration_s",
+        "checks",
+        "data",
+        "planned",
+        "errors",
+        "cleanup"
+      ],
+      "title": "elk-verify version envelope",
+      "type": "object"
+    }
+  },
+  "$id": "elk-verify.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/aborted"
+    },
+    {
+      "$ref": "#/$defs/command.schema"
+    },
+    {
+      "$ref": "#/$defs/command.version"
+    }
+  ],
+  "title": "elk-verify output (all commands)"
+}

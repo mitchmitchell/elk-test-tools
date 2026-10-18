@@ -10,14 +10,18 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import logging
 import os
 import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from importlib import metadata
 from typing import IO, Any, NoReturn
+from zoneinfo import ZoneInfo
 
+from ..link_removal import REDACTOR, install_redaction
 from .envelope import (
+    HINTS,
     Check,
     CheckStatus,
     ErrorCode,
@@ -26,7 +30,10 @@ from .envelope import (
     Severity,
     dumps,
 )
-from .schema import get_schema, schema_names
+from .schema import BUNDLE_ID, get_schema, schema_names
+
+_LOGGER = logging.getLogger("elk_test_tools.verify")
+CT = ZoneInfo("America/Chicago")
 
 SECRET_ENV_NAMES = (
     "TEST_HA_TOKEN",
@@ -90,7 +97,10 @@ def build_parser() -> _Parser:
     p = _Parser(
         prog="elk-verify",
         description="Verify TEST HA and the TEST E27 panel (offline prototype).",
-        epilog=f"Secrets are read from the environment only: {env_names}.",
+        epilog=(
+            f"Secrets are read from the environment only: {env_names}. "
+            "Check ids and output schemas: elk-verify schema <command>."
+        ),
     )
     out = p.add_mutually_exclusive_group()
     out.add_argument("--json", dest="mode", action="store_const", const="json")
@@ -106,7 +116,12 @@ def build_parser() -> _Parser:
     sub = p.add_subparsers(dest="command", parser_class=_Parser)
     sub.add_parser("version", help="tool, elke27 and schema versions (offline)")
     s = sub.add_parser("schema", help="print a JSON Schema (offline)")
-    s.add_argument("name", nargs="?", default="envelope", help=" | ".join(schema_names()))
+    s.add_argument(
+        "name",
+        nargs="?",
+        default=None,
+        help=f"one of {', '.join(schema_names())}; omit for the whole {BUNDLE_ID} bundle",
+    )
     return p
 
 
@@ -126,12 +141,13 @@ def _cmd_version(run: Run, _args: argparse.Namespace) -> None:
 
 
 def _cmd_schema(run: Run, args: argparse.Namespace) -> None:
-    name = str(args.name)
+    name: str | None = args.name
     schema = get_schema(name)
     if schema is None:
-        raise UsageError(f"unknown schema {name!r}; one of: {', '.join(schema_names())}")
-    run.data = {"name": name, "schema": schema}
-    run.checks.append(Check(f"schema.{name}.available", CheckStatus.PASS, name))
+        raise UsageError(f"unknown command {name!r}; one of: {', '.join(schema_names())}")
+    label = name or BUNDLE_ID
+    run.data = {"name": label, "schema": schema}
+    run.checks.append(Check("schema.document.built", CheckStatus.PASS, label))
 
 
 _COMMANDS: dict[str, Callable[[Run, argparse.Namespace], None]] = {
@@ -140,10 +156,11 @@ _COMMANDS: dict[str, Callable[[Run, argparse.Namespace], None]] = {
 }
 
 
-def _human(env: dict[str, Any], code: int) -> tuple[str, str]:
+def _human(env: dict[str, Any], code: int, started: dt.datetime) -> tuple[str, str]:
     header = f"elk-verify {env['command'] or '-'} · OFFLINE"
     if env["dry_run"]:
         header += " · DRY RUN"
+    header += f" · {started.astimezone(CT):%Y-%m-%d %H:%M:%S} CT"
     lines = [header]
     labels = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP", "error": "ERR "}
     for c in env["checks"]:
@@ -173,6 +190,10 @@ def main(
     stderr = stderr or sys.stderr
     clock = now or (lambda: dt.datetime.now(dt.UTC))
 
+    for name in SECRET_ENV_NAMES:
+        if env.get(name):
+            REDACTOR.add_secret(env[name])
+    install_redaction()
     redacted, secret_on_argv = redact_argv(argv, env)
     run = Run(
         command=None,
@@ -189,19 +210,33 @@ def main(
                     ErrorCode.E_SECRET_ARG,
                     Severity.ABORT,
                     "secret on the command line — secrets are never accepted as arguments",
-                    f"set it in the environment instead ({', '.join(SECRET_ENV_NAMES)})",
+                    HINTS[ErrorCode.E_SECRET_ARG] + f" ({', '.join(SECRET_ENV_NAMES)})",
                 )
             )
         else:
             args = build_parser().parse_args(argv)
             mode = args.mode or mode
             run.command = args.command
-            run.dry_run = not args.apply
+            if args.verbose:
+                _LOGGER.setLevel(logging.DEBUG)
+            _LOGGER.debug("elk-verify %s argv=%s", args.command, redacted)
             if args.dry_run and args.apply:
                 raise UsageError("--dry-run and --apply are mutually exclusive")
             if args.command is None:
                 raise UsageError(f"a command is required: {', '.join(OFFLINE_COMMANDS)}")
-            _COMMANDS[args.command](run, args)
+            if args.apply != args.yes:
+                run.errors.append(
+                    ErrorItem(
+                        ErrorCode.E_NOT_DRY_RUN_SAFE,
+                        Severity.ABORT,
+                        "only one of --apply and --yes — a real write needs both",
+                        HINTS[ErrorCode.E_NOT_DRY_RUN_SAFE],
+                    )
+                )
+            else:
+                # Only --apply together with --yes ends dry run; nothing else can.
+                run.dry_run = not (args.apply and args.yes)
+                _COMMANDS[args.command](run, args)
     except UsageError as err:
         run.checks.clear()
         run.errors.append(
@@ -209,7 +244,7 @@ def main(
                 ErrorCode.E_USAGE,
                 Severity.ABORT,
                 f"bad usage — {err}",
-                "see elk-verify --help",
+                HINTS[ErrorCode.E_USAGE],
             )
         )
     except Exception as err:  # noqa: BLE001 - never a traceback (it could carry env)
@@ -219,7 +254,7 @@ def main(
                 ErrorCode.E_INTERNAL,
                 Severity.ABORT,
                 f"internal error — {type(err).__name__}",
-                "rerun with --verbose and report it",
+                HINTS[ErrorCode.E_INTERNAL],
             )
         )
     envelope, code = run.finish(clock())
@@ -228,7 +263,7 @@ def main(
     if mode == "json":
         stdout.write(dumps(envelope))
     else:
-        out, err_text = _human(envelope, code)
+        out, err_text = _human(envelope, code, run.started)
         stdout.write(out)
         if err_text:
             stderr.write(err_text)

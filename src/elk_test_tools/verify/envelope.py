@@ -53,6 +53,26 @@ class ErrorCode(StrEnum):
     E_INTERNAL = "E_INTERNAL"
 
 
+# What to do, per code (the human "— <what to do>" part and the JSON hint).
+HINTS: dict[ErrorCode, str] = {
+    ErrorCode.E_USAGE: "see elk-verify --help",
+    ErrorCode.E_SECRET_ARG: "set secrets in the environment, never on the command line",
+    ErrorCode.E_HA_NOT_ALLOWED: "only TEST HA is allowed; use the default URL",
+    ErrorCode.E_PANEL_NOT_TEST: "point the tool at the TEST panel only",
+    ErrorCode.E_PANEL_NAME: "check the TEST panel name; stop if this is not the TEST panel",
+    ErrorCode.E_LINK_IS_HA_ENTRY: "use the tool's own link file, never TEST HA's link",
+    ErrorCode.E_LINK_FILE: "check ELK_TEST_LINK_FILE exists and is mode 0600",
+    ErrorCode.E_TOKEN_MISSING: "set TEST_HA_TOKEN",
+    ErrorCode.E_TOKEN_REJECTED: "renew TEST_HA_TOKEN for TEST HA",
+    ErrorCode.E_CODE_MISSING: "set the code's environment variable",
+    ErrorCode.E_CODE_INVALID: "use a numeric code with no leading zero that is not all zeros",
+    ErrorCode.E_UNREACHABLE: "check TEST HA / TEST panel reachability, then rerun",
+    ErrorCode.E_TIMEOUT: "rerun with a longer --timeout, or check the panel",
+    ErrorCode.E_SESSION_CONTENDED: "wait for the other session to finish, then rerun",
+    ErrorCode.E_NOT_DRY_RUN_SAFE: "pass both --apply and --yes for a real write, or neither",
+    ErrorCode.E_INTERNAL: "rerun with --verbose and report it",
+}
+
 EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_ABORT = 2
