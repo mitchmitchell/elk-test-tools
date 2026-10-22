@@ -268,3 +268,14 @@ def test_draw_serial_redraws_on_leading_zero_protect_match():
     draws = iter(["012345678904", "223456789012"])  # dummy serials
     protect = parse_serials([" 12345678904"], "--protect")
     assert lc._draw_serial(lambda: next(draws), protect) == "223456789012"
+
+
+def test_link_file_stores_protect_serials_as_given(tmp_path):
+    """Codex P2: leading zeros are stored as given, and the stored file re-parses."""
+    from elk_test_tools.link_removal import protected_serials
+
+    f = tmp_path / "tool-link.json"
+    _run_p(tmp_path, FakeClient(), _env(f), [], [" 000012345678 ", "100271709"])  # dummies
+    stored = json.loads(f.read_text())["protect"]
+    assert stored == ["000012345678", "100271709"]
+    assert protected_serials([], frozenset(stored)) == {"12345678", "100271709"}

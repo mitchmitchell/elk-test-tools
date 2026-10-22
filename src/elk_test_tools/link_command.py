@@ -36,6 +36,7 @@ from elk_test_tools.link_removal import (
     install_redaction,
     normalize_mac,
     parse_serials,
+    serials_as_given,
 )
 
 ENV_ACCESS_CODE = "ELK_TEST_ACCESS_CODE"
@@ -131,6 +132,7 @@ def run_link(
     # Validated before anything else (no lock file, no panel contact); written into
     # the link file's "protect" array at creation, so it never needs hand-editing.
     protect = parse_serials(list(protects or []), "--protect")
+    protect_given = serials_as_given(list(protects or []), "--protect")
     raw = env.get(ENV_LINK_FILE)
     target = _prepare_path(raw, vault_root)  # validate before creating the lock file
     # One run at a time (shared with elk-remove-test-link): the existence check,
@@ -147,6 +149,7 @@ def run_link(
             out=out,
             serial_factory=serial_factory,
             protect=protect,
+            protect_given=protect_given,
         )
 
 
@@ -160,7 +163,9 @@ def _run_link_locked(
     out: Callable[[str], None],
     serial_factory: Callable[[], str],
     protect: frozenset[str] = frozenset(),
+    protect_given: list[str] | None = None,
 ) -> str:
+    protect_given = sorted(protect) if protect_given is None else protect_given
     access = env.pop(ENV_ACCESS_CODE, None)
     passph = env.pop(ENV_PASSPHRASE, None)
     if not access or not passph:
@@ -190,7 +195,7 @@ def _run_link_locked(
                 "port": port,
                 "own_link_sn": serial,
                 "link_keys": keys,
-                "protect": sorted(protect),
+                "protect": protect_given,  # as given (leading zeros kept)
             },
         )
     finally:

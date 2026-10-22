@@ -428,7 +428,7 @@ def test_repeated_protect_all_apply():
     assert lr.protected_serials([BASELINE_SN, A.lower(), B]) == {BASELINE_SN, A, B}
 
 
-@pytest.mark.parametrize("bad", ["", "xyz", "1234567890", "1234567890123", "11911272526G"])
+@pytest.mark.parametrize("bad", ["", "xyz", "12345678", "1234567890123", "11911272526G"])
 def test_bad_protect_serial_refused(bad):
     p = FakePanel()
     with pytest.raises(lr.AbortError, match="--protect"):
@@ -467,7 +467,7 @@ def test_dry_run_lists_touch_screen_as_protected():
     p = FakePanel()
     lines: list[str] = []
     go(p, out=lines.append)
-    row = next(line for line in lines[0].splitlines() if lr.canonical_sn(TOUCH_SN) in line)
+    row = next(line for line in lines[0].splitlines() if TOUCH_SN in line)
     assert "PROTECT" in row and "[touch screen]" in row
 
 
@@ -626,3 +626,51 @@ def test_dry_run_matches_mn_prefixed_panel_serial():
     res = go(p, removes=("016685521139",), names=("Tester Link",), out=lines.append)
     assert res.actions == ["dry-run"]
     assert lr.DEFAULT_PROTECTED_SNS == frozenset()  # protection only via --protect
+
+
+# --- as-given storage/display; short and own-link --protect ----------------------
+
+
+def test_protect_accepts_panel_length_variant_not_on_panel():
+    p = FakePanel()
+    res = go(p, protects=(BASELINE_SN, "100271709"))  # dummy 9-digit, not on panel
+    assert res.actions == ["dry-run"]
+    assert "100271709" in lr.parse_serials(["100271709"], "--protect")
+    with pytest.raises(lr.AbortError, match="9 to 12"):
+        lr.parse_serials(["10027170"], "--protect")
+
+
+def test_remove_target_still_needs_11_or_12_digits():
+    with pytest.raises(lr.AbortError, match="11 or 12"):
+        go(FakePanel(), removes=("100271709",), names=("x",))
+
+
+def test_protect_equal_to_own_link_is_a_noop():
+    p = FakePanel()
+    res = go(p, protects=(BASELINE_SN, OWN_SN))
+    assert res.actions == ["dry-run"]
+
+
+def test_short_canonical_file_protect_reparses():
+    # Codex P2: a protect serial with several leading zeros must survive a round trip.
+    stored = lr.serials_as_given(["000012345678"], "--protect")
+    assert stored == ["000012345678"]  # stored as given, not shortened
+    assert lr.protected_serials([], frozenset(stored)) == {"12345678"}
+    assert lr.protected_serials([], frozenset({"12345678"})) == {"12345678"}
+
+
+def test_display_and_log_use_serial_as_panel_gave_it(tmp_path):
+    p = FakePanel()
+    p.devices[7] = {"sn": " 12345678901", "name": "Leading Zero Link", "mn": "222"}
+    lines: list[str] = []
+    res = go(p, removes=("012345678901",), names=("Leading Zero Link",), out=lines.append)
+    row = next(line for line in lines[0].splitlines() if "Leading Zero Link" in line)
+    assert "12345678901" in row
+    p.devices[8] = {"sn": "0100012345678909", "name": "Zero Kept", "mn": "222"}
+    lines.clear()
+    go(p, removes=("012345678909",), names=("Zero Kept",), out=lines.append)
+    row = next(line for line in lines[0].splitlines() if "Zero Kept" in line)
+    assert "012345678909" in row
+    log = tmp_path / "run.md"
+    lr.append_log(log, lr.TEST_PANEL_MAC, res)
+    assert "12345678901" in log.read_text()

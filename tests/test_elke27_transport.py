@@ -45,9 +45,11 @@ def _t(client: FakeClient) -> et.Elke27Transport:
     return t
 
 
-def test_refuses_ha_link_and_bad_sn():
-    with pytest.raises(lr.AbortError, match="HA entry"):
-        et.Elke27Transport("h", 1, "AABBCCDDEEFF", KEYS, frozenset({"AABBCCDDEEFF"}))
+def test_own_link_in_protect_is_a_noop_and_bad_sn_refused():
+    # --protect equal to the tool's own link: a no-op (the own link is always protected).
+    t = et.Elke27Transport("h", 1, "AABBCCDDEEFF", KEYS, frozenset({"AABBCCDDEEFF"}))
+    assert t.file_protected() == frozenset()
+    lr.REDACTOR.clear()
     with pytest.raises(lr.AbortError, match="12 hex"):
         et.Elke27Transport("h", 1, "nope", KEYS)
 
@@ -169,8 +171,9 @@ def test_authenticate_refuses_leading_zero_without_sending():
 def test_from_env_uses_shared_extra_protected_list(tmp_path):
     f = _link_file(tmp_path)
     env = {et.ENV_LINK_FILE: str(f)}
-    with pytest.raises(lr.AbortError, match="HA entry"):
-        et.Elke27Transport.from_env(env, ["119112725266", "AABBCCDDEEFF"])
+    # The own link given as --protect is accepted quietly (no-op).
+    et.Elke27Transport.from_env(env, ["119112725266", "AABBCCDDEEFF"])
+    lr.REDACTOR.clear()
     assert et.Elke27Transport.from_env(env, []).file_protected() == frozenset()
 
 
@@ -211,10 +214,19 @@ def test_malformed_link_file_rejected(tmp_path):
         et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(f)}, [])
 
 
-def test_own_link_in_file_protect_refused(tmp_path):
-    env = _write(tmp_path, {**BASE, "protect": ["AABBCCDDEEFF"]})
-    with pytest.raises(lr.AbortError, match="HA entry"):
-        et.Elke27Transport.from_env(env, [])
+def test_own_link_in_file_protect_is_a_noop(tmp_path):
+    env = _write(tmp_path, {**BASE, "protect": ["AABBCCDDEEFF", "119112725266"]})
+    t = et.Elke27Transport.from_env(env, [])
+    assert t.file_protected() == {"119112725266"}
+    lr.REDACTOR.clear()
+
+
+def test_own_link_with_leading_zero_in_protect_is_a_noop(tmp_path):
+    base = {**BASE, "own_link_sn": "034432605048"}  # dummy serial
+    env = _write(tmp_path, {**base, "protect": [" 34432605048"]})
+    t = et.Elke27Transport.from_env(env, ["034432605048"])
+    assert t.file_protected() == frozenset()
+    lr.REDACTOR.clear()
 
 
 # --- Contract tests against the REAL elke27 API (pinned commit) -------------------

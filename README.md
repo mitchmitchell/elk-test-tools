@@ -35,7 +35,7 @@ Guardrails (hard-coded, not overridable):
   examples), any other value, or a missing value is protected and shown as
   `PROTECT [touch screen]` in the dry-run table.
 - No remove-all, no wildcards, max 6 exact serials; `net_dev.default` is never sent.
-- Serial matching: 11-12 hex digits; whitespace and leading zeros are ignored on both sides (the panel lists a serial that starts with 0 as 11 digits with a leading space), so `012345678901` and ` 12345678901` are the same link.
+- Serial matching: --remove takes 11-12 hex digits, --protect 9-12 (a protection can only prevent a delete); whitespace and leading zeros are ignored on both sides when comparing, while serials are stored and shown as given (the panel lists a serial that starts with 0 as 11 digits with a leading space), so `012345678901` and ` 12345678901` are the same link.
 - `--apply` also needs all areas disarmed and the TEST MAC typed at a prompt.
 - Installer code: only from `ELK_TEST_INSTALLER_CODE`, read only on `--apply`, removed from
   the environment, sent in one authenticate frame, never logged/printed/stored (tested).
@@ -74,7 +74,7 @@ ELK_TEST_ACCESS_CODE=... ELK_TEST_PASSPHRASE=... elk-link-test-tool --host <TEST
   `flock` on `<link file>.lock` (next to the link file) for the whole run. A second run aborts
   before touching the panel, so concurrent runs can't orphan a link.
 - Creates the link file atomically (O_EXCL, mode 0600). Its `"protect"` array holds the
-  serials given with `--protect SERIAL` (11-12 hex, repeatable, validated before anything
+  serials given with `--protect SERIAL` (9-12 hex, repeatable, validated before anything
   else; empty if none). Don't hand-edit the file, since it holds the link keys. It never overwrites an existing
   file and refuses paths inside a git repo or under the vault.
 - Reports only success or failure. The serial, codes, keys and file path are never logged

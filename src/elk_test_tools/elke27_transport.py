@@ -24,6 +24,7 @@ from elk_test_tools.link_removal import (
     REDACTOR,
     SN_RE,
     AbortError,
+    canonical_sn,
     parse_serials,
     protected_serials,
 )
@@ -77,13 +78,11 @@ class Elke27Transport:
         sn = own_link_sn.strip().upper()
         if not SN_RE.match(sn):
             raise AbortError("own_link_sn in the link file must be 12 hex chars")
-        self._file_protected = parse_serials(file_protect, 'link file "protect"')
-        # Shared list (file "protect" + --protect): a protected link is an HA
-        # entry's or baseline link, never the tool's own.
-        if sn in protected | self._file_protected | DEFAULT_PROTECTED_SNS:
-            raise AbortError(
-                "link file is a protected (HA entry) link; the tool needs its own link"
-            )
+        # A protect entry equal to the tool's own link is a no-op: the own link is
+        # always protected by the removal tool anyway. Compared in canonical form.
+        own_canon = canonical_sn(sn)
+        self._file_protected = parse_serials(file_protect, 'link file "protect"') - {own_canon}
+        del protected  # --protect is applied by the removal run; own link is a no-op there
         for value in link_keys.values():
             REDACTOR.add_secret(str(value))
         self._host, self._port, self._own_sn = host, int(port), sn
