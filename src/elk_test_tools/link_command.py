@@ -32,6 +32,7 @@ from elk_test_tools.link_removal import (
     REDACTOR,
     TEST_PANEL_MAC,
     AbortError,
+    canonical_sn,
     install_redaction,
     normalize_mac,
     parse_serials,
@@ -203,7 +204,7 @@ def _run_link_locked(
 def _draw_serial(serial_factory: Callable[[], str], protect: frozenset[str]) -> str:
     for _ in range(MAX_SERIAL_DRAWS):
         serial = serial_factory()
-        if serial.upper() not in protect:
+        if canonical_sn(serial) not in protect:
             return serial
     raise AbortError("could not draw a serial distinct from the protected serials")
 

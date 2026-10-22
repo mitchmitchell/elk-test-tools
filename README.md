@@ -22,9 +22,9 @@ Guardrails (hard-coded, not overridable):
   matching Network Devices name in `--expect-name`.
 - Connects over the tool's **own dedicated link**, never the TEST HA entry's link.
 - Protected list (decision 41) = the tool's own link (`own_link_sn`, always) + the link
-  file's optional `"protect"` array (12-hex serials, set once with
+  file's optional `"protect"` array (serials, set once with
   `elk-link-test-tool --protect SERIAL`, e.g. the TEST HA entry's link) + optional
-  `--protect SERIAL` (12 hex, repeatable) for a single run. No serials are built in.
+  `--protect SERIAL` (repeatable) for a single run. No serials are built in.
   The tool runs fine with an empty list. A malformed `"protect"` array or link file
   aborts. A `--remove` of a protected serial aborts the whole run; only the exact
   `--remove` serials are ever deleted. A protected link already absent before the run
@@ -34,7 +34,8 @@ Guardrails (hard-coded, not overridable):
   integration links) is removable. `mn` 100 (touch screen/tablet in the Dealer API
   examples), any other value, or a missing value is protected and shown as
   `PROTECT [touch screen]` in the dry-run table.
-- No remove-all, no wildcards, max 6 exact 12-hex serials; `net_dev.default` is never sent.
+- No remove-all, no wildcards, max 6 exact serials; `net_dev.default` is never sent.
+- Serial matching: 11-12 hex digits; whitespace and leading zeros are ignored on both sides (the panel lists a serial that starts with 0 as 11 digits with a leading space), so `012345678901` and ` 12345678901` are the same link.
 - `--apply` also needs all areas disarmed and the TEST MAC typed at a prompt.
 - Installer code: only from `ELK_TEST_INSTALLER_CODE`, read only on `--apply`, removed from
   the environment, sent in one authenticate frame, never logged/printed/stored (tested).
@@ -73,7 +74,7 @@ ELK_TEST_ACCESS_CODE=... ELK_TEST_PASSPHRASE=... elk-link-test-tool --host <TEST
   `flock` on `<link file>.lock` (next to the link file) for the whole run. A second run aborts
   before touching the panel, so concurrent runs can't orphan a link.
 - Creates the link file atomically (O_EXCL, mode 0600). Its `"protect"` array holds the
-  serials given with `--protect SERIAL` (12 hex, repeatable, validated before anything
+  serials given with `--protect SERIAL` (11-12 hex, repeatable, validated before anything
   else; empty if none). Don't hand-edit the file, since it holds the link keys. It never overwrites an existing
   file and refuses paths inside a git repo or under the vault.
 - Reports only success or failure. The serial, codes, keys and file path are never logged

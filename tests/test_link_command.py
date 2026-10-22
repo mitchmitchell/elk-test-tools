@@ -259,3 +259,12 @@ def test_real_client_async_link_accepts_the_arguments_used():
     inspect.signature(Elke27Client.async_link).bind(
         None, "10.0.0.9", 2101, access_code="1", passphrase="p", client_identity={}
     )
+
+
+def test_draw_serial_redraws_on_leading_zero_protect_match():
+    from elk_test_tools import link_command as lc
+    from elk_test_tools.link_removal import parse_serials
+
+    draws = iter(["012345678904", "223456789012"])  # dummy serials
+    protect = parse_serials([" 12345678904"], "--protect")
+    assert lc._draw_serial(lambda: next(draws), protect) == "223456789012"

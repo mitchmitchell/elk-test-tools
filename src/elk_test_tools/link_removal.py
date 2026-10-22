@@ -2,7 +2,8 @@
 
 Safety properties (all enforced in code, none overridable):
 - Runs only when the connected panel MAC is TEST_PANEL_MAC.
-- Every target needs an exact 12-hex serial (--remove) AND the matching
+- Every target needs its serial (--remove; compared in canonical form: no
+  whitespace, no leading zeros, upper-case hex) AND the matching
   Network Devices name (--expect-name); any mismatch aborts the whole run.
 - Protections (decision 41): the tool's own link (own_link_sn) always, plus the
   link file's optional "protect" array, plus optional --protect serials for one
@@ -49,6 +50,8 @@ ENV_INSTALLER_CODE = "ELK_TEST_INSTALLER_CODE"
 MAX_TARGETS = 6
 REAUTH_AFTER_S = 50.0  # panel drops PIN auth after 60 s idle
 SN_RE = re.compile(r"^[0-9A-F]{12}$")
+_SN_CHARS_RE = re.compile(r"^[0-9A-F]{1,12}$")
+USER_SN_MIN_LEN = 11
 REDACT_KEYS = ("pin", "enc", "hmac", "access", "passph", "code")
 
 LOG = logging.getLogger("elk_test_tools.link_removal")
@@ -189,6 +192,36 @@ class RunResult:
     own_sn: str = ""
 
 
+def canonical_sn(raw: object, *, min_len: int = 1) -> str | None:
+    """One comparable form for a link serial, applied to BOTH sides of every match
+    (panel inventory, the tool's own link, --protect, the link file's protect list
+    and --remove targets).
+
+    Whitespace is removed anywhere, letters are upper-cased and leading zeros are
+    dropped: the panel lists a 12-digit serial that starts with 0 as 11 digits
+    with a leading space, so "012345678901" and " 12345678901" are the same link.
+    Only hex digits are accepted (decimal serials are digits only), at most 12,
+    and at least ``min_len`` before zeros are dropped. Operator input uses
+    USER_SN_MIN_LEN (the 12-char serial, or the panel's 11-char form of one that
+    starts with 0). Returns None for anything else, so malformed input never
+    matches.
+    """
+    if not isinstance(raw, str):
+        return None
+    sn = re.sub(r"\s+", "", raw).upper()
+    if not _SN_CHARS_RE.match(sn) or len(sn) < min_len:
+        return None
+    return sn.lstrip("0") or "0"
+
+
+def panel_sn(raw: object) -> str:
+    """Canonical serial from a panel get_attribs "sn" value, which may carry a
+    device prefix before the 12-char serial: whitespace removed, last 12 kept,
+    then canonical_sn. "" (never matches) when unusable."""
+    compact = re.sub(r"\s+", "", raw if isinstance(raw, str) else "")
+    return canonical_sn(compact[-12:]) or ""
+
+
 def normalize_mac(mac: str) -> str:
     return re.sub(r"[^0-9a-f]", "", (mac or "").lower())
 
@@ -235,21 +268,23 @@ def inventory(t: Transport) -> list[Slot]:
             "net_dev",
             "get_attribs",
         )
-        sn = str(a.get("sn", "")).upper()[-12:]
+        sn = panel_sn(str(a.get("sn", "")))
         slots.append(Slot(i, sn, str(a.get("name", name)), mn))
     return slots
 
 
 def parse_serials(values: Any, source: str) -> frozenset[str]:
-    """Validate a list of 12-hex serials (from --protect or the link file's
-    "protect" array). Malformed input aborts before connecting."""
+    """Validate a list of serials (from --protect or the link file's "protect"
+    array) and return their canonical forms (see canonical_sn). Up to 12 hex
+    digits; whitespace and leading zeros are ignored. Malformed input aborts
+    before connecting."""
     if not isinstance(values, (list, tuple)):
         raise AbortError(f"{source} must be a list of serials")
     given: set[str] = set()
     for raw in values:
-        sn = raw.strip().upper() if isinstance(raw, str) else ""
-        if not SN_RE.match(sn):
-            raise AbortError(f"invalid serial in {source}: need exactly 12 hex chars")
+        sn = canonical_sn(raw, min_len=USER_SN_MIN_LEN)
+        if sn is None:
+            raise AbortError(f"invalid serial in {source}: need 11 or 12 hex digits")
         given.add(sn)
     return frozenset(given)
 
@@ -259,7 +294,9 @@ def protected_serials(
 ) -> frozenset[str]:
     """Run protections = link file "protect" array + optional --protect serials
     (decision 41). The tool's own link is added once connected."""
-    return DEFAULT_PROTECTED_SNS | file_protected | parse_serials(protects, "--protect")
+    # Re-canonicalize the file list too, so every protection uses the same form.
+    file_canon = parse_serials(sorted(file_protected), 'link file "protect"')
+    return DEFAULT_PROTECTED_SNS | file_canon | parse_serials(protects, "--protect")
 
 
 def validate_targets(
@@ -273,9 +310,10 @@ def validate_targets(
         raise AbortError("each --remove needs a matching --expect-name, in order")
     out = []
     for sn, name in zip(removes, names, strict=True):
-        sn_u = sn.strip().upper()
-        if not SN_RE.match(sn_u):
-            raise AbortError(f"invalid serial {sn!r}: need exactly 12 hex chars")
+        canon = canonical_sn(sn, min_len=USER_SN_MIN_LEN)
+        if canon is None:
+            raise AbortError(f"invalid serial {sn!r}: need 11 or 12 hex digits")
+        sn_u = canon
         if sn_u in protected | DEFAULT_PROTECTED_SNS:
             raise AbortError(f"{sn_u} is protected")
         if not name.strip():
@@ -374,8 +412,8 @@ def _run_connected(
     mac = normalize_mac(t.panel_mac())
     if mac != TEST_PANEL_MAC:
         raise AbortError("panel is not the TEST panel")
-    own = str(t.own_link_sn()).upper()
-    if not SN_RE.match(own):
+    own = canonical_sn(str(t.own_link_sn())) or ""
+    if not own or own == "0":
         raise AbortError("cannot determine the tool's own link serial; refusing")
     result.own_sn = own
     protected = set(base_protected | DEFAULT_PROTECTED_SNS) | {own}
@@ -445,7 +483,7 @@ def _run_connected(
                 "net_dev",
                 "get_attribs",
             )
-            if str(a.get("sn", "")).upper()[-12:] != sn:
+            if panel_sn(str(a.get("sn", ""))) != sn:
                 raise AbortError(f"slot {slot.net_dev_id} no longer holds {sn}; stopping")
             if sn in protected or slot.touch_screen_reason:  # belt and braces
                 raise AbortError("protected target reached delete step")
@@ -510,7 +548,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="SN",
-        help="exact 12-hex link serial to remove (repeatable, max 6)",
+        help="link serial to remove (11-12 hex digits; spaces and leading zeros "
+        "ignored; repeatable, max 6)",
     )
     p.add_argument(
         "--expect-name",
@@ -524,8 +563,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="SN",
-        help="extra 12-hex serial to protect for this run (optional, repeatable); adds to "
-        "the link file's protect list and the tool's own link",
+        help="extra serial (11-12 hex digits) to protect for this run (optional, "
+        "repeatable); adds to the link file's protect list and the tool's own link",
     )
     p.add_argument(
         "--apply",
