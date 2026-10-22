@@ -52,6 +52,7 @@ REAUTH_AFTER_S = 50.0  # panel drops PIN auth after 60 s idle
 SN_RE = re.compile(r"^[0-9A-F]{12}$")
 _SN_CHARS_RE = re.compile(r"^[0-9A-F]{1,12}$")
 USER_SN_MIN_LEN = 11
+_MN_PREFIX_RE = re.compile(r"^\s*[0-9A-Za-z]+\s*:\s*(.*)$", re.DOTALL)
 REDACT_KEYS = ("pin", "enc", "hmac", "access", "passph", "code")
 
 LOG = logging.getLogger("elk_test_tools.link_removal")
@@ -215,10 +216,16 @@ def canonical_sn(raw: object, *, min_len: int = 1) -> str | None:
 
 
 def panel_sn(raw: object) -> str:
-    """Canonical serial from a panel get_attribs "sn" value, which may carry a
-    device prefix before the 12-char serial: whitespace removed, last 12 kept,
-    then canonical_sn. "" (never matches) when unusable."""
-    compact = re.sub(r"\s+", "", raw if isinstance(raw, str) else "")
+    """Canonical serial from a panel value, which may be "<mn>: <serial>" or carry
+    a device prefix before the 12-char serial: text after any "<mn>:" prefix,
+    whitespace removed, last 12 kept, then canonical_sn. "" when unusable."""
+    text = raw if isinstance(raw, str) else ""
+    # The panel may list a link as "<mn>: <serial>" (e.g. "222: 1234..."). Take the
+    # text after that prefix, so the colon is never counted as part of the serial.
+    m = _MN_PREFIX_RE.match(text)
+    if m:
+        text = m.group(1)
+    compact = re.sub(r"\s+", "", text)
     return canonical_sn(compact[-12:]) or ""
 
 

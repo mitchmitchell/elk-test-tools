@@ -609,3 +609,20 @@ def test_touch_screen_with_leading_zero_still_blocked_by_type():
     with pytest.raises(lr.AbortError, match="touch screen"):
         go(p, removes=(LZ_SN,), names=("Kitchen Keypad",), apply=True)
     assert 7 in p.devices
+
+
+def test_panel_line_with_mn_prefix_keeps_serial():
+    # Exact TEST-panel Network Devices line from Tester (TEST panel link serial).
+    assert lr.panel_sn("222: 16685521139") == "16685521139"
+    assert lr.panel_sn("222: 16685521139") == lr.canonical_sn("016685521139")
+    assert lr.panel_sn("222:016685521139") == "16685521139"
+    assert lr.panel_sn("222:") == ""
+
+
+def test_dry_run_matches_mn_prefixed_panel_serial():
+    p = FakePanel()
+    p.devices[7] = {"sn": "222: 16685521139", "name": "Tester Link", "mn": "222"}
+    lines: list[str] = []
+    res = go(p, removes=("016685521139",), names=("Tester Link",), out=lines.append)
+    assert res.actions == ["dry-run"]
+    assert lr.DEFAULT_PROTECTED_SNS == frozenset()  # protection only via --protect
