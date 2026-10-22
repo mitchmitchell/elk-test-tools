@@ -84,3 +84,14 @@ ELK_TEST_ACCESS_CODE=... ELK_TEST_PASSPHRASE=... elk-link-test-tool --host <TEST
 - Reports only success or failure. The serial, codes, keys and file path are never logged
   or printed (the serial is in the link file, and the tool auto-protects it). All logging
   is silenced while linking.
+
+## elk-verify (decision 43.1, offline prototype)
+
+The command surface from `grokbots/architecture/Elk/design-verification-cli-surface.md`. Only the parts §11 doesn't block are built. Nothing here connects to a panel or to HA.
+
+- `elk-verify version`: tool, elke27 and schema versions.
+- `elk-verify schema [version|schema]`: the full envelope JSON Schema for one command, including its stable check ids. With no name it prints the whole bundle, which is checked in as `schemas/elk-verify.v1.json`; CI fails if the file and the command differ.
+- Output: one JSON envelope (sorted keys, trailing newline) when stdout is not a TTY or with `--json`; otherwise human lines (`--human`).
+- Exit codes: 0 = every check passed or was skipped, with at least one pass. 1 = some check failed. 2 = abort, bad usage, a secret on argv, an errored check with nothing failed, or every check skipped.
+- Secrets come from the environment only (`TEST_HA_TOKEN`, `ELK_TEST_ACCESS_CODE`, `ELK_TEST_INSTALLER_CODE`, `ELK_TEST_PASSPHRASE`, `ELK_TEST_LINK_FILE`). A `--token/--code/--pin/--passphrase/--installer*` flag, or any argument equal to one of those values, exits 2 with `E_SECRET_ARG`. Codes must be digits with no leading zero and not all zeros (`E_CODE_INVALID`). A real write needs both `--apply` and `--yes`; only one of them exits 2 with `E_NOT_DRY_RUN_SAFE`, and no env var or stdin can stand in.
+- `elk_test_tools.verify.ha_registry.entry_devices` finds an entry's devices on HA 2026.10, where area devices carry `config_entry_id` and `parent_device_id` and have no `config_entries`. Older registries still work.
