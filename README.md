@@ -25,6 +25,10 @@ Guardrails (hard-coded, not overridable):
   file's optional `"protect"` array (serials, set once with
   `elk-link-test-tool --protect SERIAL`, e.g. the TEST HA entry's link) + optional
   `--protect SERIAL` (repeatable) for a single run. No serials are built in.
+  **Never pass the tool's own serial to `--protect` or the file's protect list**: the
+  tool always protects it, and a loaded own serial that appears in either list aborts
+  before connecting (it signals the wrong link file). The message names only the list
+  that clashed. Comparison ignores whitespace and leading zeros.
   The tool runs fine with an empty list. A malformed `"protect"` array or link file
   aborts. A `--remove` of a protected serial aborts the whole run; only the exact
   `--remove` serials are ever deleted. A protected link already absent before the run

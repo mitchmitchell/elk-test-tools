@@ -645,12 +645,6 @@ def test_remove_target_still_needs_11_or_12_digits():
         go(FakePanel(), removes=("100271709",), names=("x",))
 
 
-def test_protect_equal_to_own_link_is_a_noop():
-    p = FakePanel()
-    res = go(p, protects=(BASELINE_SN, OWN_SN))
-    assert res.actions == ["dry-run"]
-
-
 def test_short_canonical_file_protect_reparses():
     # Codex P2: a protect serial with several leading zeros must survive a round trip.
     stored = lr.serials_as_given(["000012345678"], "--protect")
