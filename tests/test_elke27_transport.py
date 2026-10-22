@@ -45,9 +45,10 @@ def _t(client: FakeClient) -> et.Elke27Transport:
     return t
 
 
-def test_refuses_ha_link_and_bad_sn():
-    with pytest.raises(lr.AbortError, match="HA entry"):
+def test_own_link_in_protect_aborts_and_bad_sn_refused():
+    with pytest.raises(lr.AbortError, match="in --protect") as ei:
         et.Elke27Transport("h", 1, "AABBCCDDEEFF", KEYS, frozenset({"AABBCCDDEEFF"}))
+    assert "AABBCCDDEEFF" not in str(ei.value) and '"protect" list' not in str(ei.value)
     with pytest.raises(lr.AbortError, match="12 hex"):
         et.Elke27Transport("h", 1, "nope", KEYS)
 
@@ -169,8 +170,9 @@ def test_authenticate_refuses_leading_zero_without_sending():
 def test_from_env_uses_shared_extra_protected_list(tmp_path):
     f = _link_file(tmp_path)
     env = {et.ENV_LINK_FILE: str(f)}
-    with pytest.raises(lr.AbortError, match="HA entry"):
+    with pytest.raises(lr.AbortError, match="in --protect"):
         et.Elke27Transport.from_env(env, ["119112725266", "AABBCCDDEEFF"])
+    lr.REDACTOR.clear()
     assert et.Elke27Transport.from_env(env, []).file_protected() == frozenset()
 
 
@@ -211,10 +213,42 @@ def test_malformed_link_file_rejected(tmp_path):
         et.Elke27Transport.from_env({et.ENV_LINK_FILE: str(f)}, [])
 
 
-def test_own_link_in_file_protect_refused(tmp_path):
-    env = _write(tmp_path, {**BASE, "protect": ["AABBCCDDEEFF"]})
-    with pytest.raises(lr.AbortError, match="HA entry"):
+def test_own_link_in_file_protect_aborts_naming_only_that_list(tmp_path):
+    env = _write(tmp_path, {**BASE, "protect": ["AABBCCDDEEFF", "119112725266"]})
+    with pytest.raises(lr.AbortError, match='link file "protect" list') as ei:
         et.Elke27Transport.from_env(env, [])
+    msg = str(ei.value)
+    assert "--protect" not in msg and "AABBCCDDEEFF" not in msg and str(tmp_path) not in msg
+    lr.REDACTOR.clear()
+
+
+@pytest.mark.parametrize(
+    ("file_protect", "cli_protect", "role"),
+    [
+        ([" 34432605048"], [], 'link file "protect" list'),  # panel form, leading space
+        ([], ["034432605048"], "in --protect"),
+        ([], [" 34432605048 "], "in --protect"),
+    ],
+)
+def test_own_link_clash_compared_canonically_aborts_before_connect(
+    tmp_path, monkeypatch, file_protect, cli_protect, role
+):
+    base = {**BASE, "own_link_sn": "034432605048"}  # dummy serial
+    env = _write(tmp_path, {**base, "protect": file_protect})
+    connects: list[object] = []
+    monkeypatch.setattr(et.Elke27Transport, "connect", lambda self: connects.append(self))
+    with pytest.raises(lr.AbortError, match=role) as ei:
+        et.Elke27Transport.from_env(env, cli_protect)
+    assert connects == []
+    assert "34432605048" not in str(ei.value)
+    lr.REDACTOR.clear()
+
+
+def test_unrelated_protect_entries_still_load(tmp_path):
+    env = _write(tmp_path, {**BASE, "protect": ["119112725266"]})
+    t = et.Elke27Transport.from_env(env, ["100271709"])
+    assert t.file_protected() == {"119112725266"}
+    lr.REDACTOR.clear()
 
 
 # --- Contract tests against the REAL elke27 API (pinned commit) -------------------

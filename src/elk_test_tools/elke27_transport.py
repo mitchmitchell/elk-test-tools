@@ -24,6 +24,7 @@ from elk_test_tools.link_removal import (
     REDACTOR,
     SN_RE,
     AbortError,
+    canonical_sn,
     parse_serials,
     protected_serials,
 )
@@ -77,12 +78,22 @@ class Elke27Transport:
         sn = own_link_sn.strip().upper()
         if not SN_RE.match(sn):
             raise AbortError("own_link_sn in the link file must be 12 hex chars")
+        # The tool cannot prove the link file it loaded is its own (any 0600 file
+        # with the right fields is accepted), so a loaded own serial that is also in
+        # a protect list means the wrong link file: abort before connecting. The
+        # message names only the list that clashed, never the serial or path.
+        # Compared in canonical form (whitespace and leading zeros ignored).
+        own_canon = canonical_sn(sn)
         self._file_protected = parse_serials(file_protect, 'link file "protect"')
-        # Shared list (file "protect" + --protect): a protected link is an HA
-        # entry's or baseline link, never the tool's own.
-        if sn in protected | self._file_protected | DEFAULT_PROTECTED_SNS:
+        if own_canon in self._file_protected:
             raise AbortError(
-                "link file is a protected (HA entry) link; the tool needs its own link"
+                'the link file\'s own serial is in the link file "protect" list; '
+                "wrong link file? (the tool always protects its own link)"
+            )
+        if own_canon in protected:
+            raise AbortError(
+                "the link file's own serial is in --protect; wrong link file? "
+                "(the tool always protects its own link; do not pass it to --protect)"
             )
         for value in link_keys.values():
             REDACTOR.add_secret(str(value))

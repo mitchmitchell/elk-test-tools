@@ -428,7 +428,7 @@ def test_repeated_protect_all_apply():
     assert lr.protected_serials([BASELINE_SN, A.lower(), B]) == {BASELINE_SN, A, B}
 
 
-@pytest.mark.parametrize("bad", ["", "xyz", "12345678901", "1234567890123", "11911272526G"])
+@pytest.mark.parametrize("bad", ["", "xyz", "12345678", "1234567890123", "11911272526G"])
 def test_bad_protect_serial_refused(bad):
     p = FakePanel()
     with pytest.raises(lr.AbortError, match="--protect"):
@@ -528,3 +528,143 @@ def test_own_link_serial_hidden_after_apply(tmp_path):
     res = go(FakePanel(), apply=True, out=lines.append)
     assert res.applied
     assert OWN_SN not in "\n".join(lines)
+
+
+# --- serial normalization (leading zero / leading space) -------------------------
+# Dummy serials only. The panel lists a 12-digit serial that starts with 0 as 11
+# digits with a leading space; both sides must compare equal.
+LZ_SN = "012345678901"  # as recorded by the tool
+LZ_PANEL = " 12345678901"  # as the panel lists it
+
+
+@pytest.mark.parametrize(
+    "raw", ["012345678901", " 12345678901", "12345678901", " 0123 4567 8901\t", "\t12345678901 "]
+)
+def test_canonical_sn_equates_leading_zero_and_space_forms(raw):
+    assert lr.canonical_sn(raw) == "12345678901"
+
+
+def test_canonical_sn_rejects_malformed_and_keeps_hex():
+    assert lr.canonical_sn("0aabbccddeef") == "AABBCCDDEEF"
+    for bad in ("", "   ", "12-345", "1234567890123", "11911272526G", None, 12345678901):
+        assert lr.canonical_sn(bad) is None
+    assert lr.canonical_sn("1234567890", min_len=lr.USER_SN_MIN_LEN) is None
+    assert lr.panel_sn("0100" + LZ_SN) == "12345678901"
+    assert lr.panel_sn("0100" + LZ_PANEL) == "12345678901"
+
+
+def _lz_panel(name="Leading Zero Link"):
+    p = FakePanel()
+    p.devices[7] = {"sn": LZ_PANEL, "name": name, "mn": "222"}
+    return p
+
+
+@pytest.mark.parametrize("given", [LZ_SN, LZ_PANEL, "12345678901"])
+def test_dry_run_matches_leading_zero_target(given):
+    p = _lz_panel()
+    lines: list[str] = []
+    res = go(p, removes=(given,), names=("Leading Zero Link",), out=lines.append)
+    assert res.actions == ["dry-run"]
+    row = next(line for line in lines[0].splitlines() if "Leading Zero Link" in line)
+    assert "DELETE" in row
+
+
+def test_apply_removes_leading_zero_target():
+    p = _lz_panel()
+    res = go(p, removes=(LZ_SN,), names=("Leading Zero Link",), apply=True)
+    assert res.removed == ["12345678901"]
+    assert 7 not in p.devices
+
+
+@pytest.mark.parametrize("protect", [LZ_SN, LZ_PANEL])
+def test_protect_matches_leading_zero_link(protect):
+    p = _lz_panel()
+    with pytest.raises(lr.AbortError, match="protected"):
+        go(p, removes=(LZ_SN,), names=("Leading Zero Link",), protects=(BASELINE_SN, protect))
+
+
+def test_file_protect_matches_leading_zero_link():
+    p = _lz_panel()
+    p.file_protect = [LZ_SN]
+    with pytest.raises(lr.AbortError, match="protected"):
+        go(p, removes=(LZ_PANEL,), names=("Leading Zero Link",))
+
+
+def test_own_link_with_leading_zero_is_found_and_hard_blocked(monkeypatch):
+    p = FakePanel()
+    p.devices[2] = {"sn": "0100" + LZ_PANEL, "name": "elk-test-tools", "mn": "222"}
+    monkeypatch.setattr(p, "own_link_sn", lambda: LZ_SN)
+    # The tool's own link is located on the panel despite the format difference...
+    res = go(p)
+    assert res.actions == ["dry-run"]
+    # ...and can never be targeted, in either form.
+    for given in (LZ_SN, LZ_PANEL):
+        with pytest.raises(lr.AbortError, match="protected"):
+            go(p, removes=(given,), names=("elk-test-tools",))
+
+
+def test_touch_screen_with_leading_zero_still_blocked_by_type():
+    p = FakePanel()
+    p.devices[7] = {"sn": LZ_PANEL, "name": "Kitchen Keypad", "mn": "100"}
+    with pytest.raises(lr.AbortError, match="touch screen"):
+        go(p, removes=(LZ_SN,), names=("Kitchen Keypad",), apply=True)
+    assert 7 in p.devices
+
+
+def test_panel_line_with_mn_prefix_keeps_serial():
+    # Exact TEST-panel Network Devices line from Tester (TEST panel link serial).
+    assert lr.panel_sn("222: 16685521139") == "16685521139"
+    assert lr.panel_sn("222: 16685521139") == lr.canonical_sn("016685521139")
+    assert lr.panel_sn("222:016685521139") == "16685521139"
+    assert lr.panel_sn("222:") == ""
+
+
+def test_dry_run_matches_mn_prefixed_panel_serial():
+    p = FakePanel()
+    p.devices[7] = {"sn": "222: 16685521139", "name": "Tester Link", "mn": "222"}
+    lines: list[str] = []
+    res = go(p, removes=("016685521139",), names=("Tester Link",), out=lines.append)
+    assert res.actions == ["dry-run"]
+    assert lr.DEFAULT_PROTECTED_SNS == frozenset()  # protection only via --protect
+
+
+# --- as-given storage/display; short and own-link --protect ----------------------
+
+
+def test_protect_accepts_panel_length_variant_not_on_panel():
+    p = FakePanel()
+    res = go(p, protects=(BASELINE_SN, "100271709"))  # dummy 9-digit, not on panel
+    assert res.actions == ["dry-run"]
+    assert "100271709" in lr.parse_serials(["100271709"], "--protect")
+    with pytest.raises(lr.AbortError, match="9 to 12"):
+        lr.parse_serials(["10027170"], "--protect")
+
+
+def test_remove_target_still_needs_11_or_12_digits():
+    with pytest.raises(lr.AbortError, match="11 or 12"):
+        go(FakePanel(), removes=("100271709",), names=("x",))
+
+
+def test_short_canonical_file_protect_reparses():
+    # Codex P2: a protect serial with several leading zeros must survive a round trip.
+    stored = lr.serials_as_given(["000012345678"], "--protect")
+    assert stored == ["000012345678"]  # stored as given, not shortened
+    assert lr.protected_serials([], frozenset(stored)) == {"12345678"}
+    assert lr.protected_serials([], frozenset({"12345678"})) == {"12345678"}
+
+
+def test_display_and_log_use_serial_as_panel_gave_it(tmp_path):
+    p = FakePanel()
+    p.devices[7] = {"sn": " 12345678901", "name": "Leading Zero Link", "mn": "222"}
+    lines: list[str] = []
+    res = go(p, removes=("012345678901",), names=("Leading Zero Link",), out=lines.append)
+    row = next(line for line in lines[0].splitlines() if "Leading Zero Link" in line)
+    assert "12345678901" in row
+    p.devices[8] = {"sn": "0100012345678909", "name": "Zero Kept", "mn": "222"}
+    lines.clear()
+    go(p, removes=("012345678909",), names=("Zero Kept",), out=lines.append)
+    row = next(line for line in lines[0].splitlines() if "Zero Kept" in line)
+    assert "012345678909" in row
+    log = tmp_path / "run.md"
+    lr.append_log(log, lr.TEST_PANEL_MAC, res)
+    assert "12345678901" in log.read_text()
